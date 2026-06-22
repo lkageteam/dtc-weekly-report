@@ -66,7 +66,6 @@ function deriveCycle(week) {
 const _arg = (process.argv[2] || "").trim();
 const SEMAINE = _arg ? (/^\d+$/.test(_arg) ? "Semaine " + _arg : _arg) : (latestWeekFromClassement() || DEFAULT_WEEK);
 const CY = CYCLES[SEMAINE] || deriveCycle(SEMAINE);
-console.log(`📅 Semaine ciblée : ${SEMAINE}`);
 
 // — Valeurs structurelles (stables d'une semaine à l'autre) —
 const CONFIG = {
@@ -257,6 +256,7 @@ if (DUMP) {
   process.exit(0);
 }
 const { CWEEK, volByReg, volTotal, primeTSA, champion, objectifTSA, baAgg, baDailyByReg, joursSemaine, daySeries, dailyTarget } = D;
+console.log(`📅 Semaine rendue : ${CWEEK}`);
 
 // ════════════════════════════════════════════════════════════════════
 //  PPTX SETUP
