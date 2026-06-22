@@ -1,86 +1,59 @@
 # Rapport hebdomadaire DTC Assisted — MTN Bénin × LKA
 
-Génère automatiquement le rapport `.pptx` (6 slides) à partir des données déjà produites par
-la chaîne DTC (Gmail → Apps Script → MySQL → Google Sheets).
+Génère le rapport `.pptx` (6 slides). **Répartition des rôles :**
 
-## Chaîne complète
+- **Apps Script** (chaîne DTC) = lit les données **et fait tous les calculs** (régions, rangs, targets, prime, série jour-par-jour). Il a déjà les données en main.
+- **GitHub Actions / Node** = **dessine uniquement** le `.pptx` (pptxgenjs — la seule chose qu'Apps Script ne sait pas faire).
 
 ```
-Gmail MTN ─► Apps Script ─► MySQL ─► syncSheetsFromMySQL()
-                                        │ écrit les onglets CLASSEMENT_TSA + TSA_REF
-                                        ▼
-                            ┌─ Google Sheet (à jour) ─┐
-                            │  + Sheet réponses Form BA │
-                                        │
-   (fin de sync)  Apps Script ─► repository_dispatch ─► GitHub Actions (ce repo)
-                                                              │
-                       node scripts/progress_report_dtc_assisted.js
-                       lit les 3 onglets ─► .pptx ─► artifact (+ mail optionnel)
+Gmail MTN ─► Apps Script ─► MySQL ─► Sheets (CLASSEMENT_TSA, TSA_REF)
+                  │
+                  │ buildAndTriggerReport() : calcule un PETIT JSON (~5 Ko)
+                  ▼
+        repository_dispatch (client_payload.report) ─► GitHub Actions
+                                                            │
+                            node scripts/… (moteur de rendu) ─► .pptx ─► artifact (+ mail)
 ```
 
-Le rapport est **un consommateur de plus** des onglets que la chaîne maintient déjà : aucune
-transformation, les en-têtes des Sheets sont identiques à ceux attendus par le script.
+Aucun CSV, aucune donnée brute n'est transmise : seules les **valeurs finales** transitent.
 
-## Données attendues (`inputs/`)
+## Deux modes d'exécution du script Node
 
-| Fichier | Onglet source | En-têtes |
-|---|---|---|
-| `classement.csv` | `CLASSEMENT_TSA` | `CORPORATE_NUM, SEMAINE, RANG_GLOBAL, RANG_REGIONAL, TSA, REGION, RBM, VOLUME_XAF, NB_POS_ACTIFS, NB_POS_ASSIGNES, TAUX_ACTIVATION, PRIME_ELIGIBLE` |
-| `tsa_ref.csv` | `TSA_REF` | `CORPORATE_NUM, TSA_FULL_NAME, REGION, RBM_NAME, GM_NAME, ACTIVE, OBJECTIF_DAILY` |
-| `form.csv` | Réponses du Form BA | colonnes du formulaire (Timestamp, Region, Numéro du BA, Montant…) |
+| Mode | Entrée | Usage |
+|------|--------|-------|
+| **PROD** | `inputs/report.json` (écrit depuis `client_payload`) | GitHub Actions — rend uniquement |
+| **DEV** | `inputs/classement.csv`, `tsa_ref.csv`, `form.csv` | local — calcule puis rend (pour tester le rendu) |
 
-En CI, le workflow télécharge ces 3 onglets (URLs en secrets) avant de lancer le script.
+```bash
+npm install
+# DEV : déposer les 3 CSV dans ./inputs puis
+node scripts/progress_report_dtc_assisted.js          # dernière semaine auto
+node scripts/progress_report_dtc_assisted.js 1        # forcer Semaine 1
+node scripts/progress_report_dtc_assisted.js 1 --dump # écrit inputs/report.json (= le JSON-contrat)
+# → ./outputs/Progress_Report_DTC_Assisted_LKA_SemaineN.pptx
+```
+
+`--dump` produit exactement le JSON que l'Apps Script doit envoyer (fixture + spec du contrat).
+
+## Côté Apps Script (chaîne `DTC Pushed`)
+
+1. Coller `appscript/compute_and_trigger.gs` dans le projet Apps Script lié au classeur (celui qui contient `CLASSEMENT_TSA` et `TSA_REF`).
+2. Script Property **`GH_TOKEN`** = PAT GitHub (fine-grained sur `lkageteam/dtc-weekly-report`, *Contents: Read and write* ; ou classic `repo`).
+3. Le Form BA est déjà câblé (`FORM_SS_ID` + `FORM_GID` en haut du fichier).
+4. Appeler **`buildAndTriggerReport()`** à la fin de `syncSheetsFromMySQL()` (ou via un trigger hebdo).
+   - `previewReport()` logge le JSON sans déclencher (pour vérifier les chiffres).
+
+## Côté GitHub
+
+- Rien d'obligatoire pour les données (elles arrivent par le payload).
+- **Mail (optionnel)** — l'étape d'envoi s'active si `SMTP_HOST` est défini :
+  `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_TO`.
+- Le `.pptx` est toujours récupérable dans les **Artifacts** du run (onglet Actions).
 
 ## Règles métier (résumé)
 
 - **Objectif TSA** : 12 M/jour (= somme des `OBJECTIF_DAILY` de `TSA_REF`) → 84 M/semaine.
-- **Objectif BA** : 1,5 M/jour global, réparti par % d'effectif régional (≈ 6 787/BA/jour).
-- **Prime TSA** : être n°1 de sa région **ET** volume ≥ 450 000 FCFA.
-- **Semaine** : sans argument, le script prend la **dernière `SEMAINE`** présente dans `classement.csv`.
-- Ordre des slides : Couverture · Recrutement · Activations POS · Prime & Rang · Activations BA · Clôture.
-
-## Lancer en local
-
-```bash
-npm install
-# déposer classement.csv / tsa_ref.csv / form.csv dans ./inputs
-node scripts/progress_report_dtc_assisted.js          # dernière semaine auto
-node scripts/progress_report_dtc_assisted.js 1        # forcer Semaine 1
-# → ./outputs/Progress_Report_DTC_Assisted_LKA_SemaineN.pptx
-```
-
-## Configuration GitHub (Settings → Secrets and variables → Actions)
-
-**Données (obligatoire)** — URLs CSV des onglets (publier l'onglet en CSV, ou lien gviz
-`…/gviz/tq?tqx=out:csv&sheet=CLASSEMENT_TSA` si le Sheet est partagé « tous avec le lien ») :
-
-- `CLASSEMENT_CSV_URL`
-- `TSA_REF_CSV_URL`
-- `FORM_CSV_URL`
-
-**Mail (optionnel)** — l'étape d'envoi s'active seulement si `SMTP_HOST` est défini :
-
-- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_TO`
-
-## Déclencheur depuis l'Apps Script existant
-
-À appeler à la fin de `syncSheetsFromMySQL()` (ou via un trigger hebdo). Stocker le PAT
-(scope `repo`) dans les Script Properties, pas en clair.
-
-```javascript
-function triggerWeeklyReport() {
-  var token = PropertiesService.getScriptProperties().getProperty('GH_TOKEN');
-  UrlFetchApp.fetch('https://api.github.com/repos/lkageteam/dtc-weekly-report/dispatches', {
-    method: 'post',
-    contentType: 'application/json',
-    headers: { Authorization: 'token ' + token, Accept: 'application/vnd.github+json' },
-    payload: JSON.stringify({ event_type: 'weekly-report' }),  // option : client_payload: { semaine: '2' }
-    muteHttpExceptions: true
-  });
-}
-```
-
-## Lancement manuel
-
-Onglet **Actions → Rapport hebdomadaire DTC → Run workflow** (champ `semaine` optionnel).
-Le `.pptx` est récupérable dans les **Artifacts** du run.
+- **Objectif BA** : 1,5 M/jour global, réparti par % d'effectif régional.
+- **Prime TSA** : n°1 de sa région **ET** volume ≥ 450 000 FCFA.
+- **Semaine** : par défaut, la dernière `SEMAINE` présente dans le classement.
+- Slides : Couverture · Recrutement · Activations POS · Prime & Rang · Activations BA · Clôture.

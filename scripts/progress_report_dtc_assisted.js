@@ -144,83 +144,119 @@ function parseTS(s) {
   return m ? new Date(+m[3], +m[1] - 1, +m[2], +m[4], +m[5], +m[6]) : null;
 }
 
-// ── CLASSEMENT TSA ──────────────────────────────────────────────────
-const classement = readCSV(path.join(IN, "classement.csv"));
-const allWeeks = [...new Set(classement.map(r => r.SEMAINE))];
-const weekNum = w => parseInt(String(w).replace(/\D/g, "")) || 0;
-const CWEEK = WEEKLY.classementWeek === "auto"
-  ? allWeeks.sort((a, b) => weekNum(b) - weekNum(a))[0]
-  : WEEKLY.classementWeek;
-const cw = classement.filter(r => r.SEMAINE === CWEEK);
-
-// réalisation (volume) + POS actifs par région
-const volByReg = {}, posActByReg = {};
-REGIONS.forEach(r => { volByReg[r] = 0; posActByReg[r] = 0; });
-cw.forEach(r => {
-  const k = r.REGION;
-  if (volByReg[k] === undefined) { volByReg[k] = 0; posActByReg[k] = 0; }
-  volByReg[k] += num(r.VOLUME_XAF);
-  posActByReg[k] += num(r.NB_POS_ACTIFS);
-});
-const volTotal = Object.values(volByReg).reduce((a, b) => a + b, 0);
-
-// Prime & Rang : le n°1 de chaque région (RANG_REGIONAL = 1) → les 7 éligibles à la prime
-const primeTSA = REGIONS.map(reg => {
-  const rows = cw.filter(r => r.REGION === reg);
-  return rows.find(r => num(r.RANG_REGIONAL) === 1) || rows.sort((a, b) => num(b.VOLUME_XAF) - num(a.VOLUME_XAF))[0];
-}).filter(Boolean).sort((a, b) => num(b.VOLUME_XAF) - num(a.VOLUME_XAF));
-const champion = primeTSA[0] || {};
-
-// ── RÉFÉRENTIEL TSA — OBJECTIFS (12M / jour) ────────────────────────
-// Cible journalière par région = somme des OBJECTIF_DAILY (DTC - TSA_REF.csv).
-const tsaRef = readCSV(path.join(IN, "tsa_ref.csv"));
-const posDaily = {}; REGIONS.forEach(r => posDaily[r] = 0);
-tsaRef.forEach(r => { const k = (r.REGION || "").trim().toUpperCase(); if (posDaily[k] !== undefined) posDaily[k] += num(r.OBJECTIF_DAILY); });
-const posDailyTotal = Object.values(posDaily).reduce((a, b) => a + b, 0);   // ≈ 12 000 000
-const objectifTSA = posDailyTotal * 7;                                      // objectif semaine (≈ 84M)
-// applique les cibles au bloc POS (UNIQUE POS reste figé)
-REGIONS.forEach(r => { CONFIG.pos[r].daily = Math.round(posDaily[r]); CONFIG.pos[r].weekly = Math.round(posDaily[r] * 7); });
-
-// ── ACTIVATIONS BA (formulaire) ─────────────────────────────────────
-const form = readCSV(path.join(IN, "form.csv"));
-const H0 = Object.keys(form[0] || {});
-const col = re => H0.find(h => re.test(h)) || "";
-const cReg = col(/Region/i), cBA = col(/Num.*BA/i), cMont = col(/Montant/i), cTS = col(/Timestamp/i);
-const dStart = WEEKLY.baStart ? new Date(WEEKLY.baStart + "T00:00:00") : null;
-const dEnd   = WEEKLY.baEnd   ? new Date(WEEKLY.baEnd   + "T23:59:59") : null;
-const baAgg = {};
-REGIONS.forEach(r => baAgg[r] = { ba: new Set(), act: 0, mont: 0 });
-form.forEach(r => {
-  const reg = (r[cReg] || "").trim().toUpperCase();
-  if (!baAgg[reg]) return;
-  if (dStart || dEnd) { const d = parseTS(r[cTS]); if (!d || (dStart && d < dStart) || (dEnd && d > dEnd)) return; }
-  baAgg[reg].ba.add((r[cBA] || "").trim());
-  baAgg[reg].act++;
-  baAgg[reg].mont += num(r[cMont]);
-});
-
-// série jour-par-jour (montant + activations, tous régions) sur la fenêtre BA
-const dayMap = {};
-form.forEach(r => {
-  const reg = (r[cReg] || "").trim().toUpperCase(); if (!baAgg[reg]) return;
-  const d = parseTS(r[cTS]); if (!d) return;
-  if ((dStart && d < dStart) || (dEnd && d > dEnd)) return;
-  const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  dayMap[key] = dayMap[key] || { act: 0, mont: 0 };
-  dayMap[key].act++; dayMap[key].mont += num(r[cMont]);
-});
-// Objectif BA : 1,5M / JOUR, réparti par % d'effectif régional (≈ 6 787 / BA / jour).
-// Cible semaine région = cible journalière région × (nb de jours de la semaine).
-const effTotal = Object.values(CONFIG.effectif).reduce((a, b) => a + b, 0);
-const joursSemaine = (WEEKLY.baStart && WEEKLY.baEnd) // jours inclus (15→21 = 7)
-  ? Math.round((new Date(WEEKLY.baEnd) - new Date(WEEKLY.baStart)) / 86400000) + 1 : 7;
-const baDailyByReg = {};
-REGIONS.forEach(r => { baDailyByReg[r] = Math.round((CONFIG.effectif[r] / effTotal) * CONFIG.baDailyGlobal); });
-const dayKeys = Object.keys(dayMap).sort();
-const dailyTarget = CONFIG.baDailyGlobal;                          // objectif journalier total BA (1,5M)
-const daySeries = dayKeys.map(k => ({ key: k, ...dayMap[k], pct: dailyTarget ? dayMap[k].mont / dailyTarget * 100 : 0 }));
+// ── helpers "jour" ──────────────────────────────────────────────────
 const JOURS = ["Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"];
 const dayLabel = k => { const [y, m, d] = k.split("-").map(Number); return JOURS[new Date(y, m - 1, d).getDay()] + " " + d; };
+
+// ════════════════════════════════════════════════════════════════════
+//  DONNÉES — deux modes :
+//   • PROD : JSON déjà calculé par l'Apps Script (report.json / $REPORT_JSON)
+//   • DEV  : calcul depuis les CSV locaux (inputs/*.csv)
+//  Les slides ne lisent que les variables décompactées plus bas (D).
+// ════════════════════════════════════════════════════════════════════
+function computeFromCSV() {
+  const classement = readCSV(path.join(IN, "classement.csv"));
+  const allWeeks = [...new Set(classement.map(r => r.SEMAINE))];
+  const weekNum = w => parseInt(String(w).replace(/\D/g, "")) || 0;
+  const CWEEK = WEEKLY.classementWeek === "auto"
+    ? allWeeks.sort((a, b) => weekNum(b) - weekNum(a))[0] : WEEKLY.classementWeek;
+  const cw = classement.filter(r => r.SEMAINE === CWEEK);
+
+  const volByReg = {}; REGIONS.forEach(r => volByReg[r] = 0);
+  cw.forEach(r => { if (volByReg[r.REGION] !== undefined) volByReg[r.REGION] += num(r.VOLUME_XAF); });
+  const volTotal = Object.values(volByReg).reduce((a, b) => a + b, 0);
+
+  // n°1 de chaque région (RANG_REGIONAL = 1), trié par volume décroissant
+  const primeTSA = REGIONS.map(reg => {
+    const rows = cw.filter(r => r.REGION === reg);
+    return rows.find(r => num(r.RANG_REGIONAL) === 1) || rows.sort((a, b) => num(b.VOLUME_XAF) - num(a.VOLUME_XAF))[0];
+  }).filter(Boolean).sort((a, b) => num(b.VOLUME_XAF) - num(a.VOLUME_XAF));
+
+  // TSA_REF → cibles POS (12M/jour) ; UNIQUE POS reste figé
+  const tsaRef = readCSV(path.join(IN, "tsa_ref.csv"));
+  const posDaily = {}; REGIONS.forEach(r => posDaily[r] = 0);
+  tsaRef.forEach(r => { const k = (r.REGION || "").trim().toUpperCase(); if (posDaily[k] !== undefined) posDaily[k] += num(r.OBJECTIF_DAILY); });
+  const objectifTSA = Object.values(posDaily).reduce((a, b) => a + b, 0) * 7;
+  REGIONS.forEach(r => { CONFIG.pos[r].daily = Math.round(posDaily[r]); CONFIG.pos[r].weekly = Math.round(posDaily[r] * 7); });
+
+  // FORM BA → activations + montant par région + série jour-par-jour
+  const form = readCSV(path.join(IN, "form.csv"));
+  const H0 = Object.keys(form[0] || {});
+  const col = re => H0.find(h => re.test(h)) || "";
+  const cReg = col(/Region/i), cMont = col(/Montant/i), cTS = col(/Timestamp/i);
+  const dStart = WEEKLY.baStart ? new Date(WEEKLY.baStart + "T00:00:00") : null;
+  const dEnd = WEEKLY.baEnd ? new Date(WEEKLY.baEnd + "T23:59:59") : null;
+  const inWin = d => d && (!dStart || d >= dStart) && (!dEnd || d <= dEnd);
+  const baAgg = {}; REGIONS.forEach(r => baAgg[r] = { act: 0, mont: 0 });
+  const dayMap = {};
+  form.forEach(r => {
+    const reg = (r[cReg] || "").trim().toUpperCase(); if (!baAgg[reg]) return;
+    const d = parseTS(r[cTS]); if (!inWin(d)) return;
+    baAgg[reg].act++; baAgg[reg].mont += num(r[cMont]);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    dayMap[key] = dayMap[key] || { mont: 0 }; dayMap[key].mont += num(r[cMont]);
+  });
+  // Objectif BA : 1,5M/jour réparti par % d'effectif régional ; cible semaine = ×joursSemaine
+  const effTotal = Object.values(CONFIG.effectif).reduce((a, b) => a + b, 0);
+  const joursSemaine = (WEEKLY.baStart && WEEKLY.baEnd)
+    ? Math.round((new Date(WEEKLY.baEnd) - new Date(WEEKLY.baStart)) / 86400000) + 1 : 7;
+  const baDailyByReg = {}; REGIONS.forEach(r => { baDailyByReg[r] = Math.round((CONFIG.effectif[r] / effTotal) * CONFIG.baDailyGlobal); });
+  const dailyTarget = CONFIG.baDailyGlobal;
+  const daySeries = Object.keys(dayMap).sort().map(k => ({ label: dayLabel(k), mont: dayMap[k].mont, pct: dailyTarget ? dayMap[k].mont / dailyTarget * 100 : 0 }));
+
+  return { CWEEK, volByReg, volTotal, primeTSA, champion: primeTSA[0] || {}, objectifTSA, baAgg, baDailyByReg, joursSemaine, daySeries, dailyTarget };
+}
+
+// JSON-contrat (envoyé par l'Apps Script) → mêmes variables internes que computeFromCSV
+function applyJson(j) {
+  WEEKLY.weekLabel = j.label; WEEKLY.weekNo = j.weekNo || j.semaine; WEEKLY.reportDate = j.reportDate; WEEKLY.posPeriod = j.posPeriod;
+  WEEKLY.recrutement = j.recrutement;
+  WEEKLY.noteActivations = (j.notes && j.notes.activations) || ""; WEEKLY.noteCloture = (j.notes && j.notes.cloture) || "";
+  CONFIG.primeThreshold = j.primeThreshold;
+  const volByReg = {}, baAgg = {}, baDailyByReg = {};
+  REGIONS.forEach(r => {
+    const p = (j.pos && j.pos[r]) || {}; CONFIG.pos[r] = { uniquePos: p.uniquePos || 0, daily: p.daily || 0, weekly: p.weekly || 0 };
+    volByReg[r] = p.real || 0;
+    const b = (j.ba && j.ba.rows && j.ba.rows[r]) || {};
+    CONFIG.effectif[r] = b.effectif || 0; baAgg[r] = { act: b.activations || 0, mont: b.montant || 0 }; baDailyByReg[r] = b.dailyTarget || 0;
+  });
+  const primeTSA = (j.prime || []).map(p => ({ REGION: p.region, TSA: p.tsa, RBM: p.rbm, VOLUME_XAF: p.volume, NB_POS_ACTIFS: p.posActifs, TAUX_ACTIVATION: p.tauxAct }));
+  return {
+    CWEEK: j.semaine, volByReg, volTotal: Object.values(volByReg).reduce((a, b) => a + b, 0),
+    primeTSA, champion: primeTSA[0] || {}, objectifTSA: j.objectifTSA,
+    baAgg, baDailyByReg, joursSemaine: (j.ba && j.ba.joursSemaine) || 7,
+    daySeries: (j.ba && j.ba.days) || [], dailyTarget: (j.ba && j.ba.dailyObjectif) || 0,
+  };
+}
+
+// Variables internes → JSON-contrat (sert de fixture de test + spec pour l'Apps Script)
+function buildReportJson(D) {
+  const pos = {}, rows = {};
+  REGIONS.forEach(r => {
+    pos[r] = { uniquePos: CONFIG.pos[r].uniquePos, daily: CONFIG.pos[r].daily, weekly: CONFIG.pos[r].weekly, real: D.volByReg[r] };
+    rows[r] = { effectif: CONFIG.effectif[r], activations: D.baAgg[r].act, montant: D.baAgg[r].mont, dailyTarget: D.baDailyByReg[r] };
+  });
+  return {
+    semaine: D.CWEEK, label: WEEKLY.weekLabel, weekNo: WEEKLY.weekNo, reportDate: WEEKLY.reportDate, posPeriod: WEEKLY.posPeriod,
+    recrutement: WEEKLY.recrutement, primeThreshold: CONFIG.primeThreshold, objectifTSA: D.objectifTSA, pos,
+    prime: D.primeTSA.map(p => ({ region: p.REGION, tsa: p.TSA, rbm: p.RBM, volume: num(p.VOLUME_XAF), posActifs: num(p.NB_POS_ACTIFS), tauxAct: num(p.TAUX_ACTIVATION) })),
+    ba: { joursSemaine: D.joursSemaine, dailyObjectif: D.dailyTarget, rows, days: D.daySeries.map(d => ({ label: d.label, mont: d.mont, pct: +d.pct.toFixed(1) })) },
+    notes: { activations: WEEKLY.noteActivations, cloture: WEEKLY.noteCloture },
+  };
+}
+
+const REPORT_JSON = process.env.REPORT_JSON ? path.resolve(process.env.REPORT_JSON) : path.join(IN, "report.json");
+const DUMP = process.argv.includes("--dump");
+const useJson = !DUMP && fs.existsSync(REPORT_JSON);
+console.log(useJson ? `🧩 Rendu depuis ${REPORT_JSON}` : "🧮 Calcul depuis les CSV (mode dev)");
+const D = useJson ? applyJson(JSON.parse(fs.readFileSync(REPORT_JSON, "utf8"))) : computeFromCSV();
+if (DUMP) {
+  fs.mkdirSync(IN, { recursive: true });
+  fs.writeFileSync(path.join(IN, "report.json"), JSON.stringify(buildReportJson(D), null, 2), "utf8");
+  console.log("📤 report.json écrit (JSON-contrat) → " + path.join(IN, "report.json"));
+  process.exit(0);
+}
+const { CWEEK, volByReg, volTotal, primeTSA, champion, objectifTSA, baAgg, baDailyByReg, joursSemaine, daySeries, dailyTarget } = D;
 
 // ════════════════════════════════════════════════════════════════════
 //  PPTX SETUP
@@ -432,7 +468,7 @@ const slideBA = () => {
   daySeries.forEach((d, i) => {
     const y = by + i * rowH;
     const c = d.pct >= 100 ? GREEN : d.pct >= 50 ? AMBER : REDX;
-    s.addText(dayLabel(d.key), { x: rx, y, w: lblW, h: rowH - 0.05, margin: 0, fontFace: fBody, fontSize: 8.5, color: MUTE, valign: "middle" });
+    s.addText(d.label, { x: rx, y, w: lblW, h: rowH - 0.05, margin: 0, fontFace: fBody, fontSize: 8.5, color: MUTE, valign: "middle" });
     // piste
     s.addShape(pres.shapes.RECTANGLE, { x: trackX, y: y + 0.045, w: trackW, h: rowH - 0.14, fill: { color: ROW }, line: { type: "none" } });
     // remplissage
@@ -584,7 +620,7 @@ async function embedFonts() {
   await embedFonts();
   const outDir = process.env.OUT_DIR ? path.resolve(process.env.OUT_DIR) : path.join(__dirname, "..", "outputs");
   fs.mkdirSync(outDir, { recursive: true });
-  const tag = SEMAINE.replace(/[^0-9A-Za-z]+/g, "");
+  const tag = String(CWEEK).replace(/[^0-9A-Za-z]+/g, "");
   let out = path.join(outDir, `Progress_Report_DTC_Assisted_LKA_${tag}.pptx`);
   try {
     await pres.writeFile({ fileName: out });
