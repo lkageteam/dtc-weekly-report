@@ -1,0 +1,75 @@
+name: Rapport hebdomadaire DTC
+
+on:
+  # Déclenché par l'Apps Script de la chaîne (après mise à jour des Sheets)
+  repository_dispatch:
+    types: [weekly-report]
+  # Lancement manuel depuis l'onglet Actions
+  workflow_dispatch:
+    inputs:
+      semaine:
+        description: "Semaine (ex. 1 ou 'Semaine 1'). Vide = dernière du classement."
+        required: false
+        default: ""
+  # Filet de sécurité : tous les lundis 07:00 UTC
+  schedule:
+    - cron: "0 7 * * 1"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Télécharger les données (onglets Google Sheets publiés en CSV)
+        env:
+          CLASSEMENT_CSV_URL: ${{ secrets.CLASSEMENT_CSV_URL }}
+          TSA_REF_CSV_URL: ${{ secrets.TSA_REF_CSV_URL }}
+          FORM_CSV_URL: ${{ secrets.FORM_CSV_URL }}
+        run: |
+          set -e
+          curl -fsSL "$CLASSEMENT_CSV_URL" -o inputs/classement.csv
+          curl -fsSL "$TSA_REF_CSV_URL"    -o inputs/tsa_ref.csv
+          curl -fsSL "$FORM_CSV_URL"       -o inputs/form.csv
+          echo "Lignes téléchargées :" && wc -l inputs/*.csv
+
+      - name: Générer le rapport
+        env:
+          INPUT_DIR: inputs
+          OUT_DIR: outputs
+        run: node scripts/progress_report_dtc_assisted.js "${{ github.event.client_payload.semaine || github.event.inputs.semaine }}"
+
+      - name: Identifier le fichier généré
+        id: f
+        run: echo "file=$(ls outputs/*.pptx | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Archiver le .pptx (téléchargeable depuis le run)
+        uses: actions/upload-artifact@v4
+        with:
+          name: rapport-dtc
+          path: outputs/*.pptx
+          if-no-files-found: error
+
+      # Optionnel : envoi par mail (actif uniquement si les secrets SMTP existent)
+      - name: Envoyer par mail
+        if: ${{ env.SMTP_HOST != '' }}
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_HOST }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USER }}
+          password: ${{ secrets.SMTP_PASS }}
+          subject: "Rapport hebdomadaire DTC Assisted"
+          to: ${{ secrets.MAIL_TO }}
+          from: LKA DTC <${{ secrets.SMTP_USER }}>
+          body: "Rapport DTC Assisted généré automatiquement par la chaîne. Fichier en pièce jointe."
+          attachments: ${{ steps.f.outputs.file }}

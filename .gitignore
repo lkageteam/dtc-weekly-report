@@ -1,0 +1,7 @@
+node_modules/
+inputs/*.csv
+outputs/*.pptx
+outputs/*.pdf
+*.log
+.env
+.DS_Store

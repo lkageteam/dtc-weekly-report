@@ -1,0 +1,14 @@
+{
+  "name": "dtc-weekly-report",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Rapport hebdomadaire DTC Assisted (MTN Benin x LKA) - genere le .pptx depuis les onglets Google Sheets de la chaine DTC.",
+  "main": "scripts/progress_report_dtc_assisted.js",
+  "scripts": {
+    "report": "node scripts/progress_report_dtc_assisted.js"
+  },
+  "dependencies": {
+    "pptxgenjs": "4.0.1",
+    "pptx-embed-fonts": "0.0.6"
+  }
+}
