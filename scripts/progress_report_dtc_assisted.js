@@ -72,6 +72,7 @@ const CONFIG = {
   // Recrutement à 100 % partout (recrutés = objectif) — donnée figée
   effectif: { "ATLANTIQUE": 20, "COTONOU 1": 44, "COTONOU 2": 31, "NORD EST": 41, "NORD OUEST": 24, "SUD EST": 31, "SUD OUEST": 30 },
   baDailyGlobal: 1500000,             // objectif BA global / JOUR, réparti par % d'effectif régional
+  baWorkDays: 6,                      // les BA travaillent 6 jours/semaine → cible hebdo = daily × 6
   pos: {                              // BASE GLOBALE TSA : UNIQUE POS figé ; daily/weekly recalculés depuis TSA_REF
     "ATLANTIQUE": { uniquePos:  91 },
     "COTONOU 1":  { uniquePos: 148 },
@@ -195,15 +196,13 @@ function computeFromCSV() {
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     dayMap[key] = dayMap[key] || { mont: 0 }; dayMap[key].mont += num(r[cMont]);
   });
-  // Objectif BA : 1,5M/jour réparti par % d'effectif régional ; cible semaine = ×joursSemaine
+  // Objectif BA : 1,5M/jour réparti par % d'effectif régional ; cible semaine = daily × baWorkDays (6)
   const effTotal = Object.values(CONFIG.effectif).reduce((a, b) => a + b, 0);
-  const joursSemaine = (WEEKLY.baStart && WEEKLY.baEnd)
-    ? Math.round((new Date(WEEKLY.baEnd) - new Date(WEEKLY.baStart)) / 86400000) + 1 : 7;
   const baDailyByReg = {}; REGIONS.forEach(r => { baDailyByReg[r] = Math.round((CONFIG.effectif[r] / effTotal) * CONFIG.baDailyGlobal); });
   const dailyTarget = CONFIG.baDailyGlobal;
   const daySeries = Object.keys(dayMap).sort().map(k => ({ label: dayLabel(k), mont: dayMap[k].mont, pct: dailyTarget ? dayMap[k].mont / dailyTarget * 100 : 0 }));
 
-  return { CWEEK, volByReg, volTotal, primeTSA, champion: primeTSA[0] || {}, objectifTSA, baAgg, baDailyByReg, joursSemaine, daySeries, dailyTarget };
+  return { CWEEK, volByReg, volTotal, primeTSA, champion: primeTSA[0] || {}, objectifTSA, baAgg, baDailyByReg, baWorkDays: CONFIG.baWorkDays, daySeries, dailyTarget };
 }
 
 // JSON-contrat (envoyé par l'Apps Script) → mêmes variables internes que computeFromCSV
@@ -223,7 +222,7 @@ function applyJson(j) {
   return {
     CWEEK: j.semaine, volByReg, volTotal: Object.values(volByReg).reduce((a, b) => a + b, 0),
     primeTSA, champion: primeTSA[0] || {}, objectifTSA: j.objectifTSA,
-    baAgg, baDailyByReg, joursSemaine: (j.ba && j.ba.joursSemaine) || 7,
+    baAgg, baDailyByReg, baWorkDays: (j.ba && j.ba.workDays) || 6,
     daySeries: (j.ba && j.ba.days) || [], dailyTarget: (j.ba && j.ba.dailyObjectif) || 0,
   };
 }
@@ -239,7 +238,7 @@ function buildReportJson(D) {
     semaine: D.CWEEK, label: WEEKLY.weekLabel, weekNo: WEEKLY.weekNo, reportDate: WEEKLY.reportDate, posPeriod: WEEKLY.posPeriod,
     recrutement: WEEKLY.recrutement, primeThreshold: CONFIG.primeThreshold, objectifTSA: D.objectifTSA, pos,
     prime: D.primeTSA.map(p => ({ region: p.REGION, tsa: p.TSA, rbm: p.RBM, volume: num(p.VOLUME_XAF), posActifs: num(p.NB_POS_ACTIFS), tauxAct: num(p.TAUX_ACTIVATION) })),
-    ba: { joursSemaine: D.joursSemaine, dailyObjectif: D.dailyTarget, rows, days: D.daySeries.map(d => ({ label: d.label, mont: d.mont, pct: +d.pct.toFixed(1) })) },
+    ba: { workDays: D.baWorkDays, dailyObjectif: D.dailyTarget, rows, days: D.daySeries.map(d => ({ label: d.label, mont: d.mont, pct: +d.pct.toFixed(1) })) },
     notes: { activations: WEEKLY.noteActivations, cloture: WEEKLY.noteCloture },
   };
 }
@@ -255,7 +254,7 @@ if (DUMP) {
   console.log("📤 report.json écrit (JSON-contrat) → " + path.join(IN, "report.json"));
   process.exit(0);
 }
-const { CWEEK, volByReg, volTotal, primeTSA, champion, objectifTSA, baAgg, baDailyByReg, joursSemaine, daySeries, dailyTarget } = D;
+const { CWEEK, volByReg, volTotal, primeTSA, champion, objectifTSA, baAgg, baDailyByReg, baWorkDays, daySeries, dailyTarget } = D;
 console.log(`📅 Semaine rendue : ${CWEEK}`);
 
 // ════════════════════════════════════════════════════════════════════
@@ -429,7 +428,7 @@ const slideBA = () => {
   REGIONS.forEach(reg => {
     const eff = CONFIG.effectif[reg] || 0;                       // effectif = recrutement (figé)
     const o = baAgg[reg]; const act = o.act, mont = o.mont;
-    const target = baDailyByReg[reg] * joursSemaine;            // cible journalière région × jours
+    const target = baDailyByReg[reg] * baWorkDays;             // cible hebdo = daily région × 6 jours ouvrés
     const p = target ? mont / target * 100 : 0;
     tEff += eff; tAct += act; tTar += target; tMon += mont;
     rows.push([reg, fmt(eff), fmt(act), fmt(target), fmt(mont), { text: p.toFixed(1) + "%", color: p >= 40 ? GREEN : p >= 20 ? AMBER : REDX, bold: true }]);

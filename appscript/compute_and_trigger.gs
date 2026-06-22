@@ -21,6 +21,7 @@ var RPT_REGIONS   = ['ATLANTIQUE', 'COTONOU 1', 'COTONOU 2', 'NORD EST', 'NORD O
 var RPT_EFFECTIF  = { 'ATLANTIQUE': 20, 'COTONOU 1': 44, 'COTONOU 2': 31, 'NORD EST': 41, 'NORD OUEST': 24, 'SUD EST': 31, 'SUD OUEST': 30 };
 var RPT_UNIQUEPOS = { 'ATLANTIQUE': 91, 'COTONOU 1': 148, 'COTONOU 2': 158, 'NORD EST': 296, 'NORD OUEST': 280, 'SUD EST': 520, 'SUD OUEST': 378 };
 var RPT_BA_DAILY_GLOBAL = 1500000;     // objectif BA global / jour
+var RPT_BA_WORK_DAYS    = 6;           // les BA travaillent 6 jours/semaine → cible hebdo = daily × 6
 var RPT_PRIME_THRESHOLD = 450000;      // prime TSA : n°1 régional ET volume ≥ ce seuil
 var RPT_PROGRAMME_START = new Date(2026, 5, 12); // 12 juin 2026
 var RPT_NOTE_ACTIVATIONS = "Certains BA recrutés n'ont pas été activés immédiatement en raison de l'absence du dress code (non fourni par MTN) ; l'agence a eu recours à son fournisseur pour pallier ce challenge.";
@@ -91,7 +92,6 @@ function buildReportData_(semaineArg) {
     var key = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
     dayMap[key] = (dayMap[key] || 0) + m;
   });
-  var joursSemaine = Math.round((cy.baEnd - cy.baStart) / 86400000) + 1;
   var days = Object.keys(dayMap).sort().map(function (k) {
     var p = k.split('-'), dd = new Date(+p[0], +p[1] - 1, +p[2]);
     return { label: JOURS[dd.getDay()] + ' ' + dd.getDate(), mont: dayMap[k], pct: Math.round(dayMap[k] / RPT_BA_DAILY_GLOBAL * 1000) / 10 };
@@ -107,7 +107,7 @@ function buildReportData_(semaineArg) {
   return {
     semaine: semaine, label: cy.label, weekNo: semaine, reportDate: cy.reportDate, posPeriod: cy.pos,
     recrutement: recrutement, primeThreshold: RPT_PRIME_THRESHOLD, objectifTSA: objectifTSA, pos: pos, prime: prime,
-    ba: { joursSemaine: joursSemaine, dailyObjectif: RPT_BA_DAILY_GLOBAL, rows: baRows, days: days },
+    ba: { workDays: RPT_BA_WORK_DAYS, dailyObjectif: RPT_BA_DAILY_GLOBAL, rows: baRows, days: days },
     notes: { activations: RPT_NOTE_ACTIVATIONS, cloture: RPT_NOTE_CLOTURE },
   };
 }
