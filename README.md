@@ -37,11 +37,15 @@ node scripts/progress_report_dtc_assisted.js 1 --dump # écrit inputs/report.jso
 
 ## Côté Apps Script (chaîne `DTC Pushed`)
 
-1. Coller `appscript/compute_and_trigger.gs` dans le projet Apps Script lié au classeur (celui qui contient `CLASSEMENT_TSA` et `TSA_REF`).
+1. Coller `appscript/compute_and_trigger.gs` dans le projet Apps Script lié au classeur (`CLASSEMENT_TSA` + `TSA_REF`).
 2. Script Property **`GH_TOKEN`** = PAT GitHub (fine-grained sur `lkageteam/dtc-weekly-report`, *Contents: Read and write* ; ou classic `repo`).
 3. Le Form BA est déjà câblé (`FORM_SS_ID` + `FORM_GID` en haut du fichier).
-4. Appeler **`buildAndTriggerReport()`** à la fin de `syncSheetsFromMySQL()` (ou via un trigger hebdo).
-   - `previewReport()` logge le JSON sans déclencher (pour vérifier les chiffres).
+4. Exécuter **`installWeeklyTriggers()`** une fois → filet **lundi 8h / 9h / 10h**.
+5. Ajouter **`maybeSendReport();`** à la fin de `syncSheetsFromMySQL()` → envoi dès que les données du lundi sont synchronisées.
+
+**Déclenchement automatique** — `maybeSendReport()` envoie la **dernière semaine BA bouclée** (lun→dim), calculée par date (`targetN = floor((aujourd'hui − 15 juin)/7 j)`), **une seule fois** (état `LAST_SENT_WEEK`), et seulement si ses données sont dans le classement. Pourquoi le lundi : le BA ferme dimanche et le POS jeudi → le lundi tout est complet. L'appel dans `syncSheetsFromMySQL()` (événementiel) et le cron du lundi (filet) sont idempotents grâce à l'état.
+
+**Fonctions** : `previewReport()` (logge le JSON sans envoyer) · `buildAndTriggerReport("1")` (force une semaine) · `maybeSendReport()` (auto) · `resetLastSentWeek()` (ré-autorise un renvoi).
 
 ## Côté GitHub
 

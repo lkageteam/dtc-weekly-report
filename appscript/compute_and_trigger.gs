@@ -3,15 +3,20 @@
  * À ajouter au projet Apps Script de la chaîne (D:\LKA\DTC Pushed), lié au classeur
  * contenant les onglets CLASSEMENT_TSA et TSA_REF.
  *
- * → Appeler buildAndTriggerReport()  à la fin de syncSheetsFromMySQL()  (ou trigger hebdo).
+ * Mise en service (une fois) :
+ *   1. Script Property  GH_TOKEN = PAT GitHub (fine-grained sur lkageteam/dtc-weekly-report,
+ *      « Contents: Read and write » → suffit pour repository_dispatch ; sinon classic scope `repo`).
+ *   2. Exécuter installWeeklyTriggers()  → pose le filet lundi 8h/9h/10h.
+ *   3. Ajouter  maybeSendReport();  à la fin de syncSheetsFromMySQL()  → envoi dès que les données du lundi arrivent.
  *
- * Pré-requis (une fois) :
- *   - Script Property  GH_TOKEN = PAT GitHub (fine-grained sur lkageteam/dtc-weekly-report,
- *     permission « Contents: Read and write » → suffit pour repository_dispatch ; sinon classic scope `repo`).
- *   - Le Form BA : classeur FORM_SS_ID, onglet d'id FORM_GID (déjà renseignés ci-dessous).
+ * Fonctions utiles :
+ *   • previewReport()         → logge le JSON calculé sans rien envoyer (vérif des chiffres).
+ *   • buildAndTriggerReport(n)→ force l'envoi d'une semaine (ex. "1"), ignore l'état.
+ *   • maybeSendReport()       → envoi auto de la dernière semaine BOUCLÉE, 1 seule fois (état LAST_SENT_WEEK).
+ *   • resetLastSentWeek()     → ré-autorise le renvoi.
  *
- * Le payload envoyé (~5 Ko) contient UNIQUEMENT des valeurs déjà calculées. Aucune donnée brute,
- * aucun CSV : GitHub Actions ne fait QUE dessiner le .pptx.
+ * Le Form BA : classeur FORM_SS_ID, onglet d'id FORM_GID (déjà renseignés ci-dessous).
+ * Le payload envoyé (~5 Ko) ne contient QUE des valeurs calculées — aucun CSV, aucune donnée brute.
  */
 var GH_REPO     = 'lkageteam/dtc-weekly-report';
 var FORM_SS_ID  = '18n9EGmt9VFW4N7zlj41Fv-4AoVRLSrp0ah1bRZwtAc8';
@@ -44,6 +49,47 @@ function buildAndTriggerReport(semaineArg) {
 
 /** Aperçu local du JSON (sans déclencher) — pratique pour vérifier les chiffres. */
 function previewReport() { Logger.log(JSON.stringify(buildReportData_(), null, 2)); }
+
+// ───────────────────── DÉCLENCHEMENT AUTOMATIQUE ─────────────────────
+// À appeler (a) à la fin de syncSheetsFromMySQL()  ET  (b) via un trigger
+// hebdo (installWeeklyTriggers). L'état LAST_SENT_WEEK garantit 1 envoi/semaine.
+//
+// Logique : on envoie la dernière semaine BA BOUCLÉE (lun→dim). Comme le BA ferme
+// le dimanche et le POS le jeudi, le lundi tout est complet → targetN devient la
+// semaine qui vient de finir. On n'envoie que si ses données sont dans le classement.
+function maybeSendReport() {
+  var props = PropertiesService.getScriptProperties();
+  var lastSent = parseInt(props.getProperty('LAST_SENT_WEEK') || '0', 10);
+  var targetN = Math.floor((new Date() - RPT_BA_START) / (7 * 86400000)); // 0 avant le 1er lundi
+  if (targetN < 1) { Logger.log('⏳ Aucune semaine BA bouclée pour l’instant'); return; }
+  if (targetN <= lastSent) { Logger.log('↩︎ Semaine ' + targetN + ' déjà envoyée'); return; }
+  if (!_rptWeekPresent_(targetN)) { Logger.log('⏳ Données Semaine ' + targetN + ' pas encore dans le classement'); return; }
+  buildAndTriggerReport(targetN);
+  props.setProperty('LAST_SENT_WEEK', String(targetN));
+  Logger.log('✅ Rapport Semaine ' + targetN + ' déclenché (auto)');
+}
+
+/** Installe le filet de sécurité : lundi 8h, 9h, 10h. À exécuter UNE fois. */
+function installWeeklyTriggers() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'maybeSendReport') ScriptApp.deleteTrigger(t); });
+  [8, 9, 10].forEach(function (h) {
+    ScriptApp.newTrigger('maybeSendReport').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(h).create();
+  });
+  Logger.log('✅ Triggers installés : lundi 8h, 9h, 10h → maybeSendReport');
+}
+
+/** Réinitialise l'état (force le renvoi de la semaine en cours au prochain run). */
+function resetLastSentWeek() { PropertiesService.getScriptProperties().deleteProperty('LAST_SENT_WEEK'); Logger.log('🔄 LAST_SENT_WEEK réinitialisé'); }
+
+function _rptWeekPresent_(N) {
+  var v = _rptSheetByName_(SpreadsheetApp.getActiveSpreadsheet(), 'CLASSEMENT_TSA').getDataRange().getValues();
+  if (!v.length) return false;
+  var ci = v[0].map(function (x) { return String(x).trim(); }).indexOf('SEMAINE');
+  if (ci < 0) return false;
+  var target = 'Semaine ' + N;
+  for (var i = 1; i < v.length; i++) if (String(v[i][ci]).trim() === target) return true;
+  return false;
+}
 
 // ───────────────────────────── calcul ─────────────────────────────
 function buildReportData_(semaineArg) {
