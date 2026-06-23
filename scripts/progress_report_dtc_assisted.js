@@ -39,7 +39,8 @@ const CYCLES = {
   // },
 };
 const DEFAULT_WEEK = "Semaine 1";
-const PROGRAMME_START = new Date(2026, 5, 12); // 12 juin 2026 — début du programme DTC
+const PROGRAMME_START = new Date(2026, 5, 12); // 12 juin 2026 — ancre des semaines POS (ven→jeu)
+const BA_START = new Date(2026, 5, 15);        // 15 juin 2026 — ancre des semaines BA (lun→dim)
 
 // Dernière "SEMAINE" présente dans le classement (source canonique = chaîne MySQL→Sheets).
 function latestWeekFromClassement() {
@@ -49,17 +50,18 @@ function latestWeekFromClassement() {
     return weeks.sort((a, b) => (parseInt(b.replace(/\D/g, "")) || 0) - (parseInt(a.replace(/\D/g, "")) || 0))[0] || null;
   } catch { return null; }
 }
-// Dérive un cycle (dates) pour une semaine absente de CYCLES : 7 jours à partir du début programme.
+// Dérive un cycle pour une semaine absente de CYCLES.
+// BA = lundi→dimanche (ancré 15 juin) ; POS = ven→jeu (ancré 12 juin) — décalés de 3 jours.
 function deriveCycle(week) {
-  const N = parseInt(String(week).replace(/\D/g, "")) || 1;
-  const s = new Date(PROGRAMME_START.getTime() + (N - 1) * 7 * 86400000);
-  const e = new Date(s.getTime() + 6 * 86400000);
+  const N = parseInt(String(week).replace(/\D/g, "")) || 1, MS = 86400000;
+  const bs = new Date(BA_START.getTime() + (N - 1) * 7 * MS), be = new Date(bs.getTime() + 6 * MS);
+  const ps = new Date(PROGRAMME_START.getTime() + (N - 1) * 7 * MS), pe = new Date(ps.getTime() + 6 * MS);
   const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   const dmy = d => `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
   const MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
   const human = d => `${d.getDate()} ${MOIS[d.getMonth()]} ${d.getFullYear()}`;
-  return { label: `Semaine ${N} · ${human(s)} au ${human(e)}`, reportDate: dmy(new Date(e.getTime() + 86400000)),
-    ba: [iso(s), iso(e)], pos: `${human(s)} au ${human(e)}` };
+  return { label: `Semaine ${N} · ${human(bs)} au ${human(be)}`, reportDate: dmy(new Date(be.getTime() + MS)),
+    ba: [iso(bs), iso(be)], pos: `${human(ps)} au ${human(pe)}` };
 }
 
 // Paramètre semaine : accepte 1 · "1" · "Semaine 1". Sans argument → dernière semaine du classement.

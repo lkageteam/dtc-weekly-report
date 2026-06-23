@@ -23,7 +23,8 @@ var RPT_UNIQUEPOS = { 'ATLANTIQUE': 91, 'COTONOU 1': 148, 'COTONOU 2': 158, 'NOR
 var RPT_BA_DAILY_GLOBAL = 1500000;     // objectif BA global / jour
 var RPT_BA_WORK_DAYS    = 6;           // les BA travaillent 6 jours/semaine → cible hebdo = daily × 6
 var RPT_PRIME_THRESHOLD = 450000;      // prime TSA : n°1 régional ET volume ≥ ce seuil
-var RPT_PROGRAMME_START = new Date(2026, 5, 12); // 12 juin 2026
+var RPT_PROGRAMME_START = new Date(2026, 5, 12); // 12 juin 2026 — ancre POS (ven→jeu)
+var RPT_BA_START        = new Date(2026, 5, 15); // 15 juin 2026 — ancre BA (lun→dim)
 var RPT_NOTE_ACTIVATIONS = "Certains BA recrutés n'ont pas été activés immédiatement en raison de l'absence du dress code (non fourni par MTN) ; l'agence a eu recours à son fournisseur pour pallier ce challenge.";
 var RPT_NOTE_CLOTURE     = "Maintenir le rythme jour-par-jour · Soutenir le week-end · Convertir le Top des POS";
 
@@ -114,13 +115,13 @@ function buildReportData_(semaineArg) {
 
 // ───────────────────────────── helpers ─────────────────────────────
 function _rptCycle_(semaine) {
-  if (semaine === 'Semaine 1') return { label: 'Semaine 1 · 15 au 21 juin 2026', reportDate: '22/06/2026', baStart: new Date(2026, 5, 15), baEnd: new Date(2026, 5, 21), pos: '12 au 18 juin 2026' };
   var N = parseInt(String(semaine).replace(/\D/g, ''), 10) || 1, MS = 86400000;
-  var s = new Date(RPT_PROGRAMME_START.getTime() + (N - 1) * 7 * MS), e = new Date(s.getTime() + 6 * MS);
+  var bs = new Date(RPT_BA_START.getTime() + (N - 1) * 7 * MS), be = new Date(bs.getTime() + 6 * MS);        // BA lun→dim
+  var ps = new Date(RPT_PROGRAMME_START.getTime() + (N - 1) * 7 * MS), pe = new Date(ps.getTime() + 6 * MS); // POS ven→jeu
   var MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
   function human(d) { return d.getDate() + ' ' + MOIS[d.getMonth()] + ' ' + d.getFullYear(); }
   function dmy(d) { return ('0' + d.getDate()).slice(-2) + '/' + ('0' + (d.getMonth() + 1)).slice(-2) + '/' + d.getFullYear(); }
-  return { label: 'Semaine ' + N + ' · ' + human(s) + ' au ' + human(e), reportDate: dmy(new Date(e.getTime() + MS)), baStart: s, baEnd: e, pos: human(s) + ' au ' + human(e) };
+  return { label: 'Semaine ' + N + ' · ' + human(bs) + ' au ' + human(be), reportDate: dmy(new Date(be.getTime() + MS)), baStart: bs, baEnd: be, pos: human(ps) + ' au ' + human(pe) };
 }
 function _rptSheetByName_(ss, name) { var s = ss.getSheetByName(name); if (!s) throw new Error('Onglet "' + name + '" introuvable'); return s; }
 function _rptSheetByGid_(ss, gid) { var sh = ss.getSheets(); for (var i = 0; i < sh.length; i++) if (sh[i].getSheetId() === gid) return sh[i]; throw new Error('Onglet gid ' + gid + ' introuvable'); }
