@@ -50,8 +50,9 @@ node scripts/progress_report_dtc_assisted.js 1 --dump # écrit inputs/report.jso
 ## Côté GitHub
 
 - Rien d'obligatoire pour les données (elles arrivent par le payload).
-- **Mail → `g.fondzefe@lkaservices.com`** (destinataire fixé dans le workflow). L'étape s'active dès que `SMTP_HOST` est défini. Secrets à créer :
-  `SMTP_HOST` (ex. `smtp.gmail.com`), `SMTP_PORT` (`465`), `SMTP_USER` (l'adresse expéditrice), `SMTP_PASS` (mot de passe d'application Gmail, **pas** le mot de passe du compte).
+- **Mail → `g.fondzefe@lkaservices.com`** (destinataire fixé dans le workflow), envoyé via l'**API Gmail (OAuth)** — pas de SMTP. Un seul secret :
+  - **`GMAIL_TOKEN_JSON`** = le contenu intégral de `connections/token.json` de la chaîne LKA (compte `joselonm11@gmail.com`, scope `gmail.modify`). `scripts/send_mail.js` rafraîchit l'access token et envoie le `.pptx` en pièce jointe, sans aucune dépendance.
+  - ⚠️ Le `refresh_token` doit rester valide : l'écran de consentement OAuth (Google Cloud) doit être **« In production »** (sinon les tokens d'apps en *Testing* expirent au bout de 7 jours).
 - Le `.pptx` reste aussi récupérable dans les **Artifacts** du run (onglet Actions).
 
 ## Règles métier (résumé)

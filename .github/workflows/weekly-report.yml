@@ -11,7 +11,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      GMAIL_TOKEN_JSON: ${{ secrets.GMAIL_TOKEN_JSON }}
     steps:
       - uses: actions/checkout@v4
 
@@ -52,24 +52,12 @@ jobs:
           path: outputs/*.pptx
           if-no-files-found: error
 
-      # Envoi par mail (actif uniquement si le secret SMTP_HOST est défini)
+      # Envoi par mail via l'API Gmail (OAuth) — actif si le secret GMAIL_TOKEN_JSON existe
       - name: Envoyer par mail à g.fondzefe@lkaservices.com
-        if: ${{ env.SMTP_HOST != '' }}
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: ${{ secrets.SMTP_HOST }}
-          server_port: ${{ secrets.SMTP_PORT }}
-          secure: true
-          username: ${{ secrets.SMTP_USER }}
-          password: ${{ secrets.SMTP_PASS }}
-          subject: "Rapport hebdomadaire DTC Assisted — ${{ steps.f.outputs.week }}"
-          to: g.fondzefe@lkaservices.com
-          from: LKA DTC <${{ secrets.SMTP_USER }}>
-          body: |
-            Bonjour,
-
-            Le rapport DTC Assisted (${{ steps.f.outputs.week }}) est généré automatiquement — la semaine est bouclée.
-            Le fichier .pptx est en pièce jointe.
-
-            — Chaîne automatisée LKA × MTN
-          attachments: ${{ steps.f.outputs.file }}
+        if: ${{ env.GMAIL_TOKEN_JSON != '' }}
+        env:
+          GMAIL_TOKEN_JSON: ${{ secrets.GMAIL_TOKEN_JSON }}
+          MAIL_FILE: ${{ steps.f.outputs.file }}
+          MAIL_WEEK: ${{ steps.f.outputs.week }}
+          MAIL_TO: g.fondzefe@lkaservices.com
+        run: node scripts/send_mail.js
