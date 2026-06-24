@@ -39,9 +39,11 @@ jobs:
           OUT_DIR: outputs
         run: node scripts/progress_report_dtc_assisted.js
 
-      - name: Identifier le fichier généré
+      - name: Identifier le fichier + la semaine
         id: f
-        run: echo "file=$(ls outputs/*.pptx | head -1)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "file=$(ls outputs/*.pptx | head -1)" >> "$GITHUB_OUTPUT"
+          echo "week=$(node -e 'process.stdout.write(require("./inputs/report.json").label||"")')" >> "$GITHUB_OUTPUT"
 
       - name: Archiver le .pptx (téléchargeable depuis le run)
         uses: actions/upload-artifact@v4
@@ -50,17 +52,24 @@ jobs:
           path: outputs/*.pptx
           if-no-files-found: error
 
-      # Optionnel : envoi par mail (actif uniquement si le secret SMTP_HOST existe)
-      - name: Envoyer par mail
+      # Envoi par mail (actif uniquement si le secret SMTP_HOST est défini)
+      - name: Envoyer par mail à g.fondzefe@lkaservices.com
         if: ${{ env.SMTP_HOST != '' }}
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: ${{ secrets.SMTP_HOST }}
           server_port: ${{ secrets.SMTP_PORT }}
+          secure: true
           username: ${{ secrets.SMTP_USER }}
           password: ${{ secrets.SMTP_PASS }}
-          subject: "Rapport hebdomadaire DTC Assisted"
-          to: ${{ secrets.MAIL_TO }}
+          subject: "Rapport hebdomadaire DTC Assisted — ${{ steps.f.outputs.week }}"
+          to: g.fondzefe@lkaservices.com
           from: LKA DTC <${{ secrets.SMTP_USER }}>
-          body: "Rapport DTC Assisted généré automatiquement par la chaîne. Fichier en pièce jointe."
+          body: |
+            Bonjour,
+
+            Le rapport DTC Assisted (${{ steps.f.outputs.week }}) est généré automatiquement — la semaine est bouclée.
+            Le fichier .pptx est en pièce jointe.
+
+            — Chaîne automatisée LKA × MTN
           attachments: ${{ steps.f.outputs.file }}

@@ -50,9 +50,9 @@ node scripts/progress_report_dtc_assisted.js 1 --dump # écrit inputs/report.jso
 ## Côté GitHub
 
 - Rien d'obligatoire pour les données (elles arrivent par le payload).
-- **Mail (optionnel)** — l'étape d'envoi s'active si `SMTP_HOST` est défini :
-  `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_TO`.
-- Le `.pptx` est toujours récupérable dans les **Artifacts** du run (onglet Actions).
+- **Mail → `g.fondzefe@lkaservices.com`** (destinataire fixé dans le workflow). L'étape s'active dès que `SMTP_HOST` est défini. Secrets à créer :
+  `SMTP_HOST` (ex. `smtp.gmail.com`), `SMTP_PORT` (`465`), `SMTP_USER` (l'adresse expéditrice), `SMTP_PASS` (mot de passe d'application Gmail, **pas** le mot de passe du compte).
+- Le `.pptx` reste aussi récupérable dans les **Artifacts** du run (onglet Actions).
 
 ## Règles métier (résumé)
 
