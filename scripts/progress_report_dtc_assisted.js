@@ -204,7 +204,19 @@ function computeFromCSV() {
   const dailyTarget = CONFIG.baDailyGlobal;
   const daySeries = Object.keys(dayMap).sort().map(k => ({ label: dayLabel(k), mont: dayMap[k].mont, pct: dailyTarget ? dayMap[k].mont / dailyTarget * 100 : 0 }));
 
-  return { CWEEK, volByReg, volTotal, primeTSA, champion: primeTSA[0] || {}, objectifTSA, baAgg, baDailyByReg, baWorkDays: CONFIG.baWorkDays, daySeries, dailyTarget };
+  // ── WEEK ON WEEK : réalisé par semaine 1..N (POS depuis classement, BA depuis form) ──
+  const N = weekNum(CWEEK) || 1;
+  const wow = { weeks: [], pos: [], ba: [], posObjectif: objectifTSA, baObjectif: CONFIG.baDailyGlobal * CONFIG.baWorkDays };
+  for (let k = 1; k <= N; k++) {
+    wow.weeks.push("S" + k);
+    wow.pos.push(classement.filter(r => r.SEMAINE === "Semaine " + k).reduce((s, r) => s + num(r.VOLUME_XAF), 0));
+    const ws = new Date(BA_START.getTime() + (k - 1) * 7 * 86400000), we = new Date(ws.getTime() + 7 * 86400000 - 1);
+    let m = 0;
+    form.forEach(r => { if (!REGIONS.includes((r[cReg] || "").trim().toUpperCase())) return; const d = parseTS(r[cTS]); if (d && d >= ws && d <= we) m += num(r[cMont]); });
+    wow.ba.push(m);
+  }
+
+  return { CWEEK, volByReg, volTotal, primeTSA, champion: primeTSA[0] || {}, objectifTSA, baAgg, baDailyByReg, baWorkDays: CONFIG.baWorkDays, daySeries, dailyTarget, wow };
 }
 
 // JSON-contrat (envoyé par l'Apps Script) → mêmes variables internes que computeFromCSV
@@ -226,6 +238,7 @@ function applyJson(j) {
     primeTSA, champion: primeTSA[0] || {}, objectifTSA: j.objectifTSA,
     baAgg, baDailyByReg, baWorkDays: (j.ba && j.ba.workDays) || 6,
     daySeries: (j.ba && j.ba.days) || [], dailyTarget: (j.ba && j.ba.dailyObjectif) || 0,
+    wow: j.wow || { weeks: [], pos: [], ba: [], posObjectif: j.objectifTSA || 0, baObjectif: 0 },
   };
 }
 
@@ -241,6 +254,7 @@ function buildReportJson(D) {
     recrutement: WEEKLY.recrutement, primeThreshold: CONFIG.primeThreshold, objectifTSA: D.objectifTSA, pos,
     prime: D.primeTSA.map(p => ({ region: p.REGION, tsa: p.TSA, rbm: p.RBM, volume: num(p.VOLUME_XAF), posActifs: num(p.NB_POS_ACTIFS), tauxAct: num(p.TAUX_ACTIVATION) })),
     ba: { workDays: D.baWorkDays, dailyObjectif: D.dailyTarget, rows, days: D.daySeries.map(d => ({ label: d.label, mont: d.mont, pct: +d.pct.toFixed(1) })) },
+    wow: D.wow,
     notes: { activations: WEEKLY.noteActivations, cloture: WEEKLY.noteCloture },
   };
 }
@@ -256,7 +270,7 @@ if (DUMP) {
   console.log("📤 report.json écrit (JSON-contrat) → " + path.join(IN, "report.json"));
   process.exit(0);
 }
-const { CWEEK, volByReg, volTotal, primeTSA, champion, objectifTSA, baAgg, baDailyByReg, baWorkDays, daySeries, dailyTarget } = D;
+const { CWEEK, volByReg, volTotal, primeTSA, champion, objectifTSA, baAgg, baDailyByReg, baWorkDays, daySeries, dailyTarget, wow } = D;
 console.log(`📅 Semaine rendue : ${CWEEK}`);
 
 // ════════════════════════════════════════════════════════════════════
@@ -269,7 +283,7 @@ pres.title = "Progress Report DTC Assisted — MTN Bénin";
 pres.author = "Contribution LKA";
 pres.company = "MTN Bénin";
 
-const TOTAL = 6;
+const TOTAL = 7;
 
 // ── HELPERS ─────────────────────────────────────────────────────────
 function light(slide) { slide.background = { color: BG }; }
@@ -578,7 +592,43 @@ const slideBA = () => {
 slideBA();
 
 // ════════════════════════════════════════════════════════════════════
-//  SLIDE 6 · CLÔTURE (page de clôture)
+//  SLIDE 6 · TENDANCES WEEK-ON-WEEK (POS + BA)
+// ════════════════════════════════════════════════════════════════════
+{
+  const s = pres.addSlide(); light(s);
+  chrome(s, 6, "Tendances · Évolution hebdomadaire");
+  header(s, "Week-on-week", `Réalisé par semaine vs objectif · jusqu'à ${CWEEK}`);
+
+  const fmtM = v => v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 0 : 1).replace(".", ",") + " M"
+    : (v >= 1e3 ? Math.round(v / 1e3) + " k" : String(Math.round(v)));
+
+  function drawChart(x, y, w, h, title, values, objectif, barColor) {
+    s.addText(title, { x, y, w, h: 0.3, margin: 0, fontFace: fHead, bold: true, fontSize: 12.5, color: INK });
+    const px = x, pw = w - 0.2, py = y + 0.46, ph = h - 0.78, baseY = py + ph;
+    const scaleMax = Math.max(objectif, ...(values.length ? values : [0]), 1) * 1.15;
+    // baseline
+    s.addShape(pres.shapes.RECTANGLE, { x: px, y: baseY, w: pw, h: 0.012, fill: { color: LINE }, line: { type: "none" } });
+    // barres + étiquettes
+    const n = Math.max(values.length, 1), slot = pw / n, bw = Math.min(0.95, slot * 0.5);
+    values.forEach((v, i) => {
+      const cx = px + slot * (i + 0.5), bx = cx - bw / 2, bh = Math.max(0.02, (v / scaleMax) * ph);
+      s.addShape(pres.shapes.RECTANGLE, { x: bx, y: baseY - bh, w: bw, h: bh, fill: { color: barColor }, line: { type: "none" } });
+      s.addText(fmtM(v), { x: cx - 0.8, y: baseY - bh - 0.22, w: 1.6, h: 0.2, align: "center", margin: 0, fontFace: fHead, bold: true, fontSize: 8.5, color: INK });
+      s.addText("S" + (i + 1), { x: cx - 0.6, y: baseY + 0.05, w: 1.2, h: 0.2, align: "center", margin: 0, fontFace: fBody, fontSize: 9, color: MUTE });
+    });
+    // ligne objectif (pointillés)
+    const objY = baseY - (objectif / scaleMax) * ph;
+    s.addShape(pres.shapes.LINE, { x: px, y: objY, w: pw, h: 0, line: { color: REDX, width: 1.5, dashType: "dash" } });
+    s.addText("Objectif " + fmtM(objectif), { x: px + pw - 2.2, y: objY - 0.24, w: 2.2, h: 0.2, align: "right", margin: 0, fontFace: fBody, bold: true, fontSize: 9, color: REDX });
+  }
+
+  const chH = 2.5;
+  drawChart(MX, 1.5, CW, chH, "POS — Volume réalisé / semaine (FCFA)", wow.pos, wow.posObjectif, YEL);
+  drawChart(MX, 1.5 + chH + 0.45, CW, chH, "BA — Montant réalisé / semaine (FCFA)", wow.ba, wow.baObjectif, YELDK);
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  SLIDE 7 · CLÔTURE (page de clôture)
 // ════════════════════════════════════════════════════════════════════
 {
   const s = pres.addSlide(); light(s);
@@ -632,5 +682,5 @@ async function embedFonts() {
     await pres.writeFile({ fileName: out });
     console.warn("⚠️ Fichier principal verrouillé (ouvert ?) — écrit sous un nom alternatif.");
   }
-  console.log(`✅ Done · 6 slides · classement=${CWEEK} · ${out}`);
+  console.log(`✅ Done · 7 slides · classement=${CWEEK} · ${out}`);
 })();

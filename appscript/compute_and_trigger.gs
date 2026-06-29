@@ -144,6 +144,19 @@ function buildReportData_(semaineArg) {
     return { label: JOURS[dd.getDay()] + ' ' + dd.getDate(), mont: dayMap[k], pct: Math.round(dayMap[k] / RPT_BA_DAILY_GLOBAL * 1000) / 10 };
   });
 
+  // WEEK ON WEEK : réalisé par semaine 1..N (POS depuis classement, BA depuis form, fenêtres lun→dim)
+  var N = parseInt(String(semaine).replace(/\D/g, ''), 10) || 1;
+  var wow = { weeks: [], pos: [], ba: [], posObjectif: objectifTSA, baObjectif: RPT_BA_DAILY_GLOBAL * RPT_BA_WORK_DAYS };
+  for (var k = 1; k <= N; k++) {
+    wow.weeks.push('S' + k);
+    var wk = 'Semaine ' + k, vp = 0;
+    classement.forEach(function (r) { if (String(r.SEMAINE).trim() === wk) vp += _rptNum_(r.VOLUME_XAF); });
+    wow.pos.push(vp);
+    var ws = new Date(RPT_BA_START.getTime() + (k - 1) * 7 * 86400000), we = new Date(ws.getTime() + 7 * 86400000 - 1), vb = 0;
+    formRows.forEach(function (r) { var reg = String(r[kReg] || '').trim().toUpperCase(); if (!RPT_EFFECTIF[reg]) return; var d = r[kTs]; if (!(d instanceof Date)) d = _rptDate_(d); if (d && d >= ws && d <= we) vb += _rptNum_(r[kMont]); });
+    wow.ba.push(vb);
+  }
+
   // assemblage
   var pos = {}, baRows = {}, recrutement = {};
   RPT_REGIONS.forEach(function (r) {
@@ -155,6 +168,7 @@ function buildReportData_(semaineArg) {
     semaine: semaine, label: cy.label, weekNo: semaine, reportDate: cy.reportDate, posPeriod: cy.pos,
     recrutement: recrutement, primeThreshold: RPT_PRIME_THRESHOLD, objectifTSA: objectifTSA, pos: pos, prime: prime,
     ba: { workDays: RPT_BA_WORK_DAYS, dailyObjectif: RPT_BA_DAILY_GLOBAL, rows: baRows, days: days },
+    wow: wow,
     notes: { activations: RPT_NOTE_ACTIVATIONS, cloture: RPT_NOTE_CLOTURE },
   };
 }
