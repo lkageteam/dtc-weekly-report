@@ -447,7 +447,7 @@ const slideBA = () => {
     const target = baDailyByReg[reg] * baWorkDays;             // cible hebdo = daily région × 6 jours ouvrés
     const p = target ? mont / target * 100 : 0;
     tEff += eff; tAct += act; tTar += target; tMon += mont;
-    rows.push([reg, fmt(eff), fmt(act), fmt(target), fmt(mont), { text: p.toFixed(1) + "%", color: p >= 50 ? GREEN : p >= 20 ? AMBER : REDX, bold: true }]);
+    rows.push([reg, fmt(eff), fmt(act), fmt(target), fmt(mont), { text: p.toFixed(1) + "%", color: p >= 100 ? GREEN : p >= 50 ? AMBER : REDX, bold: true }]);
   });
   const tp = tTar ? tMon / tTar * 100 : 0;
   const tx = MX, tw = 7.35, ty = 2.1;
@@ -522,7 +522,7 @@ const slideBA = () => {
     const real = volByReg[reg] || 0;
     const taux = p.weekly ? real / p.weekly * 100 : 0;
     tPos += p.uniquePos; tD += p.daily; tW += p.weekly; tReal += real;
-    rows.push([reg, fmt(p.uniquePos), fmt(p.daily), fmt(p.weekly), fmt(real), { text: taux.toFixed(1) + "%", color: taux >= 5 ? GREEN : taux >= 2.5 ? AMBER : REDX, bold: true }]);
+    rows.push([reg, fmt(p.uniquePos), fmt(p.daily), fmt(p.weekly), fmt(real), { text: taux.toFixed(1) + "%", color: taux >= 100 ? GREEN : taux >= 50 ? AMBER : REDX, bold: true }]);
   });
   const tt = tW ? tReal / tW * 100 : 0;
   const ty = 2.0, rowH = 0.46, tw = CW;
@@ -568,7 +568,7 @@ const slideBA = () => {
   const rows = primeTSA.map(r => {
     const elig = num(r.VOLUME_XAF) >= CONFIG.primeThreshold; if (elig) nbElig++;
     return [r.REGION, toTitle(r.TSA), r.RBM ? toTitle(r.RBM) : "—",
-      fmt(r.VOLUME_XAF), fmt(r.NB_POS_ACTIFS), num(r.TAUX_ACTIVATION).toFixed(1) + "%",
+      fmt(r.VOLUME_XAF),
       { text: elig ? "OUI" : "NON", color: elig ? GREEN : REDX, bold: true }];
   });
   // bandeau règle + verdict d'éligibilité
@@ -582,9 +582,9 @@ const slideBA = () => {
   ], { x: MX + 0.22, y: bnY, w: CW - 0.4, h: 0.4, margin: 0, valign: "middle", fontSize: 10.5 });
 
   const ty = 3.18, tw = CW;
-  table(s, MX, ty, tw, ["RÉGION", "TSA (N°1 RÉGIONAL)", "RBM", "VOLUME (XAF)", "POS ACTIFS", "TAUX ACT.", "PRIME"], rows, {
-    colWidths: [tw * 0.15, tw * 0.25, tw * 0.21, tw * 0.13, tw * 0.10, tw * 0.09, tw * 0.07],
-    rowH: 0.40, fs: 9.5, hfs: 9,
+  table(s, MX, ty, tw, ["RÉGION", "TSA (N°1 RÉGIONAL)", "RBM", "VOLUME (XAF)", "PRIME"], rows, {
+    colWidths: [tw * 0.16, tw * 0.30, tw * 0.28, tw * 0.16, tw * 0.10],
+    rowH: 0.42, fs: 10, hfs: 9.5,
   });
 }
 
