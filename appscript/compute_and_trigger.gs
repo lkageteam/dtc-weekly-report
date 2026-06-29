@@ -22,6 +22,12 @@ var GH_REPO     = 'lkageteam/dtc-weekly-report';
 var FORM_SS_ID  = '18n9EGmt9VFW4N7zlj41Fv-4AoVRLSrp0ah1bRZwtAc8';
 var FORM_GID    = 1776404976;
 
+// ⚙️  CHOIX MANUEL DE LA SEMAINE (pour le bouton Run / previewReport / buildAndTriggerReport sans argument)
+//   • mettre un nombre (ex. 2) → force cette semaine
+//   • laisser null            → prend la dernière semaine présente dans le classement
+//   (N'affecte PAS l'envoi automatique maybeSendReport, qui choisit toujours par date.)
+var RPT_FORCE_WEEK = 2;
+
 var RPT_REGIONS   = ['ATLANTIQUE', 'COTONOU 1', 'COTONOU 2', 'NORD EST', 'NORD OUEST', 'SUD EST', 'SUD OUEST'];
 var RPT_EFFECTIF  = { 'ATLANTIQUE': 20, 'COTONOU 1': 44, 'COTONOU 2': 31, 'NORD EST': 41, 'NORD OUEST': 24, 'SUD EST': 31, 'SUD OUEST': 30 };
 var RPT_UNIQUEPOS = { 'ATLANTIQUE': 91, 'COTONOU 1': 148, 'COTONOU 2': 158, 'NORD EST': 296, 'NORD OUEST': 280, 'SUD EST': 520, 'SUD OUEST': 378 };
@@ -48,7 +54,7 @@ function buildAndTriggerReport(semaineArg) {
 }
 
 /** Aperçu local du JSON (sans déclencher) — pratique pour vérifier les chiffres. */
-function previewReport() { Logger.log(JSON.stringify(buildReportData_(), null, 2)); }
+function previewReport(semaineArg) { Logger.log(JSON.stringify(buildReportData_(semaineArg), null, 2)); }
 
 // ───────────────────── DÉCLENCHEMENT AUTOMATIQUE ─────────────────────
 // À appeler (a) à la fin de syncSheetsFromMySQL()  ET  (b) via un trigger
@@ -97,11 +103,12 @@ function buildReportData_(semaineArg) {
   var classement = _rptRows_(_rptSheetByName_(bound, 'CLASSEMENT_TSA'));
   var tsaRef     = _rptRows_(_rptSheetByName_(bound, 'TSA_REF'));
 
-  // semaine cible : argument, sinon dernière SEMAINE du classement
+  // semaine cible : argument si présent, sinon constante RPT_FORCE_WEEK (si définie), sinon dernière SEMAINE du classement
   var weeks = {};
   classement.forEach(function (r) { var w = String(r.SEMAINE || '').trim(); if (/semaine/i.test(w)) weeks[w] = true; });
   var weekList = Object.keys(weeks).sort(function (a, b) { return (parseInt(b.replace(/\D/g, '')) || 0) - (parseInt(a.replace(/\D/g, '')) || 0); });
-  var semaine = semaineArg ? (/^\d+$/.test(String(semaineArg)) ? 'Semaine ' + semaineArg : String(semaineArg)) : (weekList[0] || 'Semaine 1');
+  var targetWeek = semaineArg || RPT_FORCE_WEEK;
+  var semaine = targetWeek ? (/^\d+$/.test(String(targetWeek)) ? 'Semaine ' + targetWeek : String(targetWeek)) : (weekList[0] || 'Semaine 1');
   var cy = _rptCycle_(semaine);
   var cw = classement.filter(function (r) { return String(r.SEMAINE).trim() === semaine; });
 

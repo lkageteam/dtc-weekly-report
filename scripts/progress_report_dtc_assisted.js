@@ -283,7 +283,7 @@ pres.title = "Progress Report DTC Assisted — MTN Bénin";
 pres.author = "Contribution LKA";
 pres.company = "MTN Bénin";
 
-const TOTAL = 7;
+const TOTAL = 8;
 
 // ── HELPERS ─────────────────────────────────────────────────────────
 function light(slide) { slide.background = { color: BG }; }
@@ -592,43 +592,84 @@ const slideBA = () => {
 slideBA();
 
 // ════════════════════════════════════════════════════════════════════
-//  SLIDE 6 · TENDANCES WEEK-ON-WEEK (POS + BA)
+//  SLIDES 6-7 · WEEK-OVER-WEEK (variance) — POS, puis BA
 // ════════════════════════════════════════════════════════════════════
-{
-  const s = pres.addSlide(); light(s);
-  chrome(s, 6, "Tendances · Évolution hebdomadaire");
-  header(s, "Week-on-week", `Réalisé par semaine vs objectif · jusqu'à ${CWEEK}`);
-
-  const fmtM = v => v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 0 : 1).replace(".", ",") + " M"
+function fmtWow(v) {
+  return v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 0 : 1).replace(".", ",") + " M"
     : (v >= 1e3 ? Math.round(v / 1e3) + " k" : String(Math.round(v)));
-
-  function drawChart(x, y, w, h, title, values, objectif, barColor) {
-    s.addText(title, { x, y, w, h: 0.3, margin: 0, fontFace: fHead, bold: true, fontSize: 12.5, color: INK });
-    const px = x, pw = w - 0.2, py = y + 0.46, ph = h - 0.78, baseY = py + ph;
-    const scaleMax = Math.max(objectif, ...(values.length ? values : [0]), 1) * 1.15;
-    // baseline
-    s.addShape(pres.shapes.RECTANGLE, { x: px, y: baseY, w: pw, h: 0.012, fill: { color: LINE }, line: { type: "none" } });
-    // barres + étiquettes
-    const n = Math.max(values.length, 1), slot = pw / n, bw = Math.min(0.95, slot * 0.5);
-    values.forEach((v, i) => {
-      const cx = px + slot * (i + 0.5), bx = cx - bw / 2, bh = Math.max(0.02, (v / scaleMax) * ph);
-      s.addShape(pres.shapes.RECTANGLE, { x: bx, y: baseY - bh, w: bw, h: bh, fill: { color: barColor }, line: { type: "none" } });
-      s.addText(fmtM(v), { x: cx - 0.8, y: baseY - bh - 0.22, w: 1.6, h: 0.2, align: "center", margin: 0, fontFace: fHead, bold: true, fontSize: 8.5, color: INK });
-      s.addText("S" + (i + 1), { x: cx - 0.6, y: baseY + 0.05, w: 1.2, h: 0.2, align: "center", margin: 0, fontFace: fBody, fontSize: 9, color: MUTE });
-    });
-    // ligne objectif (pointillés)
-    const objY = baseY - (objectif / scaleMax) * ph;
-    s.addShape(pres.shapes.LINE, { x: px, y: objY, w: pw, h: 0, line: { color: REDX, width: 1.5, dashType: "dash" } });
-    s.addText("Objectif " + fmtM(objectif), { x: px + pw - 2.2, y: objY - 0.24, w: 2.2, h: 0.2, align: "right", margin: 0, fontFace: fBody, bold: true, fontSize: 9, color: REDX });
-  }
-
-  const chH = 2.5;
-  drawChart(MX, 1.5, CW, chH, "POS — Volume réalisé / semaine (FCFA)", wow.pos, wow.posObjectif, YEL);
-  drawChart(MX, 1.5 + chH + 0.45, CW, chH, "BA — Montant réalisé / semaine (FCFA)", wow.ba, wow.baObjectif, YELDK);
 }
+// Barres de variation s/s (vert hausse / rouge baisse) + ligne de tendance (total) + ligne d'objectif.
+// Double échelle : % (gauche) pour les barres, absolu (droite) pour les lignes.
+function drawWowVariance(s, x, y, w, h, values, target) {
+  const n = values.length;
+  const wowPct = values.map((v, i) => (i === 0 || !values[i - 1]) ? null : (v - values[i - 1]) / values[i - 1] * 100);
+  const mags = wowPct.filter(p => p != null).map(p => Math.abs(p));
+  const maxMag = Math.max(10, ...(mags.length ? mags : [10])) * 1.25;          // demi-échelle % (gauche)
+  const vmin = Math.min(...(values.length ? values : [0])), vmax = Math.max(...(values.length ? values : [1]));
+  const pad = (vmax - vmin) || vmax || 1;
+  const absMin = Math.max(0, vmin - pad * 0.25), absMax = vmax + pad * 0.25;    // échelle absolue ZOOMÉE sur les données
+  const px = x + 0.62, pw = w - 0.62 - 0.72, py = y + 0.2, ph = h - 0.2 - 0.5, baseY = py + ph;
+  const zeroY = py + ph / 2, slot = pw / Math.max(n, 1);
+  const yAbs = v => baseY - ((v - absMin) / (absMax - absMin || 1)) * ph;
+
+  // cadre + repères
+  s.addShape(pres.shapes.LINE, { x: px, y: py, w: 0, h: ph, line: { color: LINE, width: 0.75 } });
+  s.addShape(pres.shapes.LINE, { x: px, y: baseY, w: pw, h: 0, line: { color: LINE, width: 0.75 } });
+  s.addShape(pres.shapes.LINE, { x: px, y: zeroY, w: pw, h: 0, line: { color: "CFCFCF", width: 0.75, dashType: "dash" } });
+  [["+" + Math.round(maxMag) + " %", py - 0.03], ["0 %", zeroY - 0.1], ["-" + Math.round(maxMag) + " %", baseY - 0.17]]
+    .forEach(([t, yy]) => s.addText(t, { x: px - 0.6, y: yy, w: 0.54, h: 0.2, align: "right", margin: 0, fontFace: fBody, fontSize: 7.5, color: MUTE2 }));
+  [[fmtWow(absMax), py - 0.03], [fmtWow(absMin), baseY - 0.1]]
+    .forEach(([t, yy]) => s.addText(t, { x: px + pw + 0.04, y: yy, w: 0.7, h: 0.2, align: "left", margin: 0, fontFace: fBody, fontSize: 7.5, color: MUTE2 }));
+
+  // barres de variation : valeur (absolue) DANS la barre, % de variation AU BOUT
+  wowPct.forEach((p, i) => {
+    if (p == null) return;
+    const cx = px + slot * (i + 0.5), bw = Math.min(1.05, slot * 0.42), bx = cx - bw / 2;
+    const up = p >= 0, hh = Math.max(0.04, Math.abs(p) / maxMag * (ph / 2)), by = up ? zeroY - hh : zeroY, col = up ? GREEN : REDX;
+    const tall = hh > 0.28;
+    s.addShape(pres.shapes.RECTANGLE, { x: bx, y: by, w: bw, h: hh, fill: { color: col }, line: { type: "none" } });
+    s.addText(fmtWow(values[i]), { x: cx - 0.85, w: 1.7, h: 0.2, align: "center", margin: 0, fontFace: fHead, bold: true, fontSize: 8.5,
+      color: tall ? "FFFFFF" : INK, y: tall ? (up ? by + 0.04 : by + hh - 0.22) : (up ? by - 0.21 : by + hh + 0.03) });
+    s.addText((up ? "+" : "") + p.toFixed(1) + " %", { x: cx - 0.85, w: 1.7, h: 0.18, align: "center", margin: 0, fontFace: fHead, bold: true, fontSize: 9, color: col,
+      y: up ? (tall ? by - 0.2 : by - 0.42) : (tall ? by + hh + 0.03 : by + hh + 0.24) });
+  });
+
+  // ligne objectif (axe absolu) — clampée en haut/bas si hors échelle zoomée
+  let oy = yAbs(target), suf = "";
+  if (target > absMax) { oy = py; suf = "  ↑"; } else if (target < absMin) { oy = baseY; suf = "  ↓"; }
+  s.addShape(pres.shapes.LINE, { x: px, y: oy, w: pw, h: 0, line: { color: INK, width: 1.25, dashType: "dash" } });
+  s.addText("Objectif " + fmtWow(target) + suf, { x: px + 0.1, y: oy + 0.03, w: 2.6, h: 0.2, align: "left", margin: 0, fontFace: fHead, bold: true, fontSize: 9, color: INK });
+
+  // ligne de tendance (total) + points + valeurs
+  for (let i = 1; i < n; i++) {
+    const x1 = px + slot * (i - 0.5), x2 = px + slot * (i + 0.5), y1 = yAbs(values[i - 1]), y2 = yAbs(values[i]);
+    s.addShape(pres.shapes.LINE, { x: x1, y: y1, w: x2 - x1, h: y2 - y1, line: { color: YELDK, width: 2.25 } });
+  }
+  values.forEach((v, i) => {
+    const cx = px + slot * (i + 0.5), cy = yAbs(v);
+    s.addShape(pres.shapes.OVAL, { x: cx - 0.05, y: cy - 0.05, w: 0.1, h: 0.1, fill: { color: YELDK }, line: { color: "FFFFFF", width: 1 } });
+    if (wowPct[i] == null) s.addText(fmtWow(v), { x: cx - 0.75, y: cy - 0.26, w: 1.5, h: 0.18, align: "center", margin: 0, fontFace: fHead, bold: true, fontSize: 8.5, color: INK }); // 1re semaine (sans barre)
+    s.addText("S" + (i + 1), { x: cx - slot / 2, y: baseY + 0.07, w: slot, h: 0.2, align: "center", margin: 0, fontFace: fBody, fontSize: 9, color: MUTE });
+  });
+}
+function wowSlide(page, titre, sousTitre, values, target) {
+  const s = pres.addSlide(); light(s);
+  chrome(s, page, "Tendances · Évolution semaine/semaine");
+  header(s, titre, sousTitre);
+  // légende
+  const lg = [["Hausse s/s", GREEN], ["Baisse s/s", REDX], ["Total réalisé", YELDK], ["Objectif", INK]];
+  lg.forEach(([lbl, col], i) => {
+    const lx = MX + i * 2.05;
+    s.addShape(pres.shapes.RECTANGLE, { x: lx, y: 1.42, w: 0.2, h: 0.13, fill: { color: col }, line: { type: "none" } });
+    s.addText(lbl, { x: lx + 0.28, y: 1.36, w: 1.7, h: 0.24, margin: 0, fontFace: fBody, fontSize: 9.5, color: INK, valign: "middle" });
+  });
+  drawWowVariance(s, MX, 1.95, CW, 4.5, values, target);
+}
+wowSlide(6, "Week-over-week — POS", `Volume réalisé / semaine vs objectif · jusqu'à ${CWEEK}`, wow.pos, wow.posObjectif);
+wowSlide(7, "Week-over-week — BA", `Montant réalisé / semaine vs objectif · jusqu'à ${CWEEK}`, wow.ba, wow.baObjectif);
 
 // ════════════════════════════════════════════════════════════════════
-//  SLIDE 7 · CLÔTURE (page de clôture)
+//  SLIDE 8 · CLÔTURE (page de clôture)
 // ════════════════════════════════════════════════════════════════════
 {
   const s = pres.addSlide(); light(s);
@@ -682,5 +723,5 @@ async function embedFonts() {
     await pres.writeFile({ fileName: out });
     console.warn("⚠️ Fichier principal verrouillé (ouvert ?) — écrit sous un nom alternatif.");
   }
-  console.log(`✅ Done · 7 slides · classement=${CWEEK} · ${out}`);
+  console.log(`✅ Done · 8 slides · classement=${CWEEK} · ${out}`);
 })();
