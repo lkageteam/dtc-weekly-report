@@ -90,4 +90,5 @@ Mode DEV uniquement pour l'instant (lit les mêmes CSV que l'hebdo dans `inputs/
 - **Prime TSA** : n°1 de sa région **ET** volume ≥ 450 000 FCFA.
 - **Semaine** : par défaut, la dernière `SEMAINE` présente dans le classement.
 - **Retours terrain** : répartition cumulée (toutes semaines) des réponses à « Quel est le problème principal rencontré ? » du Form, classées en 9 catégories + « Divers / Autres » (les « non / RAS / aucun » sont exclus).
-- Slides : Couverture · Recrutement · Activations POS · Prime & Rang · Activations BA · WoW POS · WoW BA · Retours terrain · Clôture.
+- Slides : Couverture · Recrutement · Activations POS · Prime & Rang · Activations BA · Week-over-week (POS+BA, 1 slide, graphique matplotlib) · Analyse BA (transactions/montant/personnes actives) · Retours terrain · Clôture.
+- Le graphique Week-over-week est une image PNG générée par `python scripts/gen_wow_chart.py inputs/report.json assets/tmp/wow_chart.png` (nécessite `pip install -r scripts/requirements.txt`) — la CI le fait automatiquement avant le rendu. En DEV local sans Python, la slide affiche un message au lieu de planter.
