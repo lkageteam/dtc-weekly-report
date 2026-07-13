@@ -150,6 +150,53 @@ function parseTS(s) {
 const JOURS = ["Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"];
 const dayLabel = k => { const [y, m, d] = k.split("-").map(Number); return JOURS[new Date(y, m - 1, d).getDay()] + " " + d; };
 
+// ── Retours Terrain : classification des problèmes (Form) ───────────
+// 9 catégories retenues (libellés repris des nouvelles réponses du Form) + "Divers".
+const RETOUR_LABELS = [
+  "Lenteur du message flash / prompt / validation",
+  "Le prompt de validation ne vient pas du tout",
+  "Compte débité mais le prompt n'arrive pas chez le client",
+  "Erreur de code PIN lors de la liaison/validation",
+  "Client/abonné ne se présente pas avec son téléphone (ou refuse de le donner / de confirmer)",
+  "Problème avec la SIM rattachée (ne fonctionne pas / échoue)",
+  "Problème avec la SIM marchand (permutation, non éligible)",
+  "Le numéro du client/abonné n'apparaît pas dans le message/SMS retour côté POS",
+  "Demande relative au versement des commissions sur le compte commission",
+];
+const RETOUR_AUTRES = "Divers / Autres";
+const _norm = s => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+// renvoie un libellé canonique, "Divers / Autres", ou null (pas de problème)
+function classifyRetour(raw) {
+  const t = _norm(raw);
+  if (!t) return null;
+  if (/^(non|aucun|ras|r\.a\.s|rien|pas de probleme|aucun probleme|n\/?a)\b/.test(t)) return null;
+  // 1) correspondance exacte avec un libellé canonique (nouvelles réponses)
+  for (const lbl of RETOUR_LABELS) if (_norm(lbl) === t) return lbl;
+  // 2) classification par mots-clés (anciennes réponses en texte libre) — du spécifique au générique
+  if (/commission|versement/.test(t)) return RETOUR_LABELS[8];
+  if (/marchand|permut|eligib/.test(t)) return RETOUR_LABELS[6];
+  if (/sim/.test(t)) return RETOUR_LABELS[5];
+  if (/\bpin\b|code pin/.test(t)) return RETOUR_LABELS[3];
+  if (/numero.*(apparait|apparait pas)|sms.*retour|message.*retour|retour.*pos/.test(t)) return RETOUR_LABELS[7];
+  if (/debit|defalqu|compte.*(debit|defalqu)|debite.*prompt/.test(t)) return RETOUR_LABELS[2];
+  if (/(prompt|validation).*(ne vient|n.?arrive|pas du tout)|ne vient pas/.test(t)) return RETOUR_LABELS[1];
+  if (/telephone|presente|refuse|confirmer|papier|mefian/.test(t)) return RETOUR_LABELS[4];
+  if (/lenteur|lent|flash|prompt|validation/.test(t)) return RETOUR_LABELS[0];
+  return RETOUR_AUTRES;
+}
+function aggregateRetours(form, cProb) {
+  const counts = {}; let total = 0;
+  form.forEach(r => {
+    const lbl = classifyRetour(r[cProb]);
+    if (!lbl) return;
+    counts[lbl] = (counts[lbl] || 0) + 1; total++;
+  });
+  const items = Object.keys(counts)
+    .map(label => ({ label, count: counts[label], pct: total ? +(counts[label] / total * 100).toFixed(1) : 0 }))
+    .sort((a, b) => b.count - a.count);
+  return { total, items };
+}
+
 // ════════════════════════════════════════════════════════════════════
 //  DONNÉES — deux modes :
 //   • PROD : JSON déjà calculé par l'Apps Script (report.json / $REPORT_JSON)
@@ -186,6 +233,8 @@ function computeFromCSV() {
   const H0 = Object.keys(form[0] || {});
   const col = re => H0.find(h => re.test(h)) || "";
   const cReg = col(/Region/i), cMont = col(/Montant/i), cTS = col(/Timestamp/i);
+  const cProb = col(/probl.*principal|principal.*rencontr/i);
+  const cNumBA = col(/num.*ro.*du.*ba|numero_ba/i); // identifiant stable (téléphone) — pas l'email, qui change souvent
   const dStart = WEEKLY.baStart ? new Date(WEEKLY.baStart + "T00:00:00") : null;
   const dEnd = WEEKLY.baEnd ? new Date(WEEKLY.baEnd + "T23:59:59") : null;
   const inWin = d => d && (!dStart || d >= dStart) && (!dEnd || d <= dEnd);
@@ -207,16 +256,27 @@ function computeFromCSV() {
   // ── WEEK ON WEEK : réalisé par semaine 1..N (POS depuis classement, BA depuis form) ──
   const N = weekNum(CWEEK) || 1;
   const wow = { weeks: [], pos: [], ba: [], posObjectif: objectifTSA, baObjectif: CONFIG.baDailyGlobal * CONFIG.baWorkDays };
+  // Diagnostic BA : volume (nb transactions), valeur (montant) et #personnes actives (numero_ba distincts) par semaine
+  const baDiag = { weeks: [], nbTx: [], montant: [], actifs: [] };
   for (let k = 1; k <= N; k++) {
     wow.weeks.push("S" + k);
     wow.pos.push(classement.filter(r => r.SEMAINE === "Semaine " + k).reduce((s, r) => s + num(r.VOLUME_XAF), 0));
     const ws = new Date(BA_START.getTime() + (k - 1) * 7 * 86400000), we = new Date(ws.getTime() + 7 * 86400000 - 1);
-    let m = 0;
-    form.forEach(r => { if (!REGIONS.includes((r[cReg] || "").trim().toUpperCase())) return; const d = parseTS(r[cTS]); if (d && d >= ws && d <= we) m += num(r[cMont]); });
+    let m = 0, nbTx = 0; const actifsSet = new Set();
+    form.forEach(r => {
+      if (!REGIONS.includes((r[cReg] || "").trim().toUpperCase())) return;
+      const d = parseTS(r[cTS]); if (!d || d < ws || d > we) return;
+      m += num(r[cMont]); nbTx++;
+      const numBA = (r[cNumBA] || "").trim().toUpperCase(); if (numBA) actifsSet.add(numBA);
+    });
     wow.ba.push(m);
+    baDiag.weeks.push("S" + k); baDiag.nbTx.push(nbTx); baDiag.montant.push(m); baDiag.actifs.push(actifsSet.size);
   }
 
-  return { CWEEK, volByReg, volTotal, primeTSA, champion: primeTSA[0] || {}, objectifTSA, baAgg, baDailyByReg, baWorkDays: CONFIG.baWorkDays, daySeries, dailyTarget, wow };
+  // RETOURS TERRAIN : répartition cumulée des problèmes signalés (toutes semaines)
+  const retours = aggregateRetours(form, cProb);
+
+  return { CWEEK, volByReg, volTotal, primeTSA, champion: primeTSA[0] || {}, objectifTSA, baAgg, baDailyByReg, baWorkDays: CONFIG.baWorkDays, daySeries, dailyTarget, wow, retours, baDiag };
 }
 
 // JSON-contrat (envoyé par l'Apps Script) → mêmes variables internes que computeFromCSV
@@ -239,6 +299,8 @@ function applyJson(j) {
     baAgg, baDailyByReg, baWorkDays: (j.ba && j.ba.workDays) || 6,
     daySeries: (j.ba && j.ba.days) || [], dailyTarget: (j.ba && j.ba.dailyObjectif) || 0,
     wow: j.wow || { weeks: [], pos: [], ba: [], posObjectif: j.objectifTSA || 0, baObjectif: 0 },
+    retours: j.retours || { total: 0, items: [] },
+    baDiag: j.baDiag || { weeks: [], nbTx: [], montant: [], actifs: [] },
   };
 }
 
@@ -255,6 +317,8 @@ function buildReportJson(D) {
     prime: D.primeTSA.map(p => ({ region: p.REGION, tsa: p.TSA, rbm: p.RBM, volume: num(p.VOLUME_XAF), posActifs: num(p.NB_POS_ACTIFS), tauxAct: num(p.TAUX_ACTIVATION) })),
     ba: { workDays: D.baWorkDays, dailyObjectif: D.dailyTarget, rows, days: D.daySeries.map(d => ({ label: d.label, mont: d.mont, pct: +d.pct.toFixed(1) })) },
     wow: D.wow,
+    retours: D.retours,
+    baDiag: D.baDiag,
     notes: { activations: WEEKLY.noteActivations, cloture: WEEKLY.noteCloture },
   };
 }
@@ -270,7 +334,7 @@ if (DUMP) {
   console.log("📤 report.json écrit (JSON-contrat) → " + path.join(IN, "report.json"));
   process.exit(0);
 }
-const { CWEEK, volByReg, volTotal, primeTSA, champion, objectifTSA, baAgg, baDailyByReg, baWorkDays, daySeries, dailyTarget, wow } = D;
+const { CWEEK, volByReg, volTotal, primeTSA, champion, objectifTSA, baAgg, baDailyByReg, baWorkDays, daySeries, dailyTarget, wow, retours, baDiag } = D;
 console.log(`📅 Semaine rendue : ${CWEEK}`);
 
 // ════════════════════════════════════════════════════════════════════
@@ -283,7 +347,7 @@ pres.title = "Progress Report DTC Assisted — MTN Bénin";
 pres.author = "Contribution LKA";
 pres.company = "MTN Bénin";
 
-const TOTAL = 8;
+const TOTAL = 9;
 
 // ── HELPERS ─────────────────────────────────────────────────────────
 function light(slide) { slide.background = { color: BG }; }
@@ -592,84 +656,103 @@ const slideBA = () => {
 slideBA();
 
 // ════════════════════════════════════════════════════════════════════
-//  SLIDES 6-7 · WEEK-OVER-WEEK (variance) — POS, puis BA
+//  SLIDE 6 · WEEK-OVER-WEEK (POS + BA sur une seule slide, graphique matplotlib)
 // ════════════════════════════════════════════════════════════════════
-function fmtWow(v) {
-  return v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 0 : 1).replace(".", ",") + " M"
-    : (v >= 1e3 ? Math.round(v / 1e3) + " k" : String(Math.round(v)));
-}
-// Barres de variation s/s (vert hausse / rouge baisse) + ligne de tendance (total) + ligne d'objectif.
-// Double échelle : % (gauche) pour les barres, absolu (droite) pour les lignes.
-function drawWowVariance(s, x, y, w, h, values, target) {
-  const n = values.length;
-  const wowPct = values.map((v, i) => (i === 0 || !values[i - 1]) ? null : (v - values[i - 1]) / values[i - 1] * 100);
-  const mags = wowPct.filter(p => p != null).map(p => Math.abs(p));
-  const maxMag = Math.max(10, ...(mags.length ? mags : [10])) * 1.25;          // demi-échelle % (gauche)
-  const vmin = Math.min(...(values.length ? values : [0])), vmax = Math.max(...(values.length ? values : [1]));
-  const pad = (vmax - vmin) || vmax || 1;
-  const absMin = Math.max(0, vmin - pad * 0.25), absMax = vmax + pad * 0.25;    // échelle absolue ZOOMÉE sur les données
-  const px = x + 0.62, pw = w - 0.62 - 0.72, py = y + 0.2, ph = h - 0.2 - 0.5, baseY = py + ph;
-  const zeroY = py + ph / 2, slot = pw / Math.max(n, 1);
-  const yAbs = v => baseY - ((v - absMin) / (absMax - absMin || 1)) * ph;
-
-  // cadre + repères
-  s.addShape(pres.shapes.LINE, { x: px, y: py, w: 0, h: ph, line: { color: LINE, width: 0.75 } });
-  s.addShape(pres.shapes.LINE, { x: px, y: baseY, w: pw, h: 0, line: { color: LINE, width: 0.75 } });
-  s.addShape(pres.shapes.LINE, { x: px, y: zeroY, w: pw, h: 0, line: { color: "CFCFCF", width: 0.75, dashType: "dash" } });
-  [["+" + Math.round(maxMag) + " %", py - 0.03], ["0 %", zeroY - 0.1], ["-" + Math.round(maxMag) + " %", baseY - 0.17]]
-    .forEach(([t, yy]) => s.addText(t, { x: px - 0.6, y: yy, w: 0.54, h: 0.2, align: "right", margin: 0, fontFace: fBody, fontSize: 7.5, color: MUTE2 }));
-  [[fmtWow(absMax), py - 0.03], [fmtWow(absMin), baseY - 0.1]]
-    .forEach(([t, yy]) => s.addText(t, { x: px + pw + 0.04, y: yy, w: 0.7, h: 0.2, align: "left", margin: 0, fontFace: fBody, fontSize: 7.5, color: MUTE2 }));
-
-  // barres de variation : valeur (absolue) DANS la barre, % de variation AU BOUT
-  wowPct.forEach((p, i) => {
-    if (p == null) return;
-    const cx = px + slot * (i + 0.5), bw = Math.min(1.05, slot * 0.42), bx = cx - bw / 2;
-    const up = p >= 0, hh = Math.max(0.04, Math.abs(p) / maxMag * (ph / 2)), by = up ? zeroY - hh : zeroY, col = up ? GREEN : REDX;
-    const tall = hh > 0.28;
-    s.addShape(pres.shapes.RECTANGLE, { x: bx, y: by, w: bw, h: hh, fill: { color: col }, line: { type: "none" } });
-    s.addText(fmtWow(values[i]), { x: cx - 0.85, w: 1.7, h: 0.2, align: "center", margin: 0, fontFace: fHead, bold: true, fontSize: 8.5,
-      color: tall ? "FFFFFF" : INK, y: tall ? (up ? by + 0.04 : by + hh - 0.22) : (up ? by - 0.21 : by + hh + 0.03) });
-    s.addText((up ? "+" : "") + p.toFixed(1) + " %", { x: cx - 0.85, w: 1.7, h: 0.18, align: "center", margin: 0, fontFace: fHead, bold: true, fontSize: 9, color: col,
-      y: up ? (tall ? by - 0.2 : by - 0.42) : (tall ? by + hh + 0.03 : by + hh + 0.24) });
-  });
-
-  // ligne objectif (axe absolu) — clampée en haut/bas si hors échelle zoomée
-  let oy = yAbs(target), suf = "";
-  if (target > absMax) { oy = py; suf = "  ↑"; } else if (target < absMin) { oy = baseY; suf = "  ↓"; }
-  s.addShape(pres.shapes.LINE, { x: px, y: oy, w: pw, h: 0, line: { color: INK, width: 1.25, dashType: "dash" } });
-  s.addText("Objectif " + fmtWow(target) + suf, { x: px + 0.1, y: oy + 0.03, w: 2.6, h: 0.2, align: "left", margin: 0, fontFace: fHead, bold: true, fontSize: 9, color: INK });
-
-  // ligne de tendance (total) + points + valeurs
-  for (let i = 1; i < n; i++) {
-    const x1 = px + slot * (i - 0.5), x2 = px + slot * (i + 0.5), y1 = yAbs(values[i - 1]), y2 = yAbs(values[i]);
-    s.addShape(pres.shapes.LINE, { x: x1, y: y1, w: x2 - x1, h: y2 - y1, line: { color: YELDK, width: 2.25 } });
-  }
-  values.forEach((v, i) => {
-    const cx = px + slot * (i + 0.5), cy = yAbs(v);
-    s.addShape(pres.shapes.OVAL, { x: cx - 0.05, y: cy - 0.05, w: 0.1, h: 0.1, fill: { color: YELDK }, line: { color: "FFFFFF", width: 1 } });
-    if (wowPct[i] == null) s.addText(fmtWow(v), { x: cx - 0.75, y: cy - 0.26, w: 1.5, h: 0.18, align: "center", margin: 0, fontFace: fHead, bold: true, fontSize: 8.5, color: INK }); // 1re semaine (sans barre)
-    s.addText("S" + (i + 1), { x: cx - slot / 2, y: baseY + 0.07, w: slot, h: 0.2, align: "center", margin: 0, fontFace: fBody, fontSize: 9, color: MUTE });
-  });
-}
-function wowSlide(page, titre, sousTitre, values, target) {
+// Le graphique (barres de variance + courbe lissée + ligne d'objectif, axes % et
+// absolu toujours centrés sur le même zéro) est généré par scripts/gen_wow_chart.py
+// à partir de inputs/report.json — voir README. S'il n'existe pas (python non lancé
+// en dev), on affiche un message plutôt que de planter le rendu.
+{
   const s = pres.addSlide(); light(s);
-  chrome(s, page, "Tendances · Évolution semaine/semaine");
-  header(s, titre, sousTitre);
-  // légende
-  const lg = [["Hausse s/s", GREEN], ["Baisse s/s", REDX], ["Total réalisé", YELDK], ["Objectif", INK]];
-  lg.forEach(([lbl, col], i) => {
-    const lx = MX + i * 2.05;
-    s.addShape(pres.shapes.RECTANGLE, { x: lx, y: 1.42, w: 0.2, h: 0.13, fill: { color: col }, line: { type: "none" } });
-    s.addText(lbl, { x: lx + 0.28, y: 1.36, w: 1.7, h: 0.24, margin: 0, fontFace: fBody, fontSize: 9.5, color: INK, valign: "middle" });
-  });
-  drawWowVariance(s, MX, 1.95, CW, 4.5, values, target);
+  chrome(s, 6, "Tendances · Évolution semaine/semaine");
+  header(s, "Week-over-week — POS & BA", `Volume/Montant réalisés par semaine vs objectif · jusqu'à ${CWEEK}`);
+  const wowChartPath = process.env.WOW_CHART_PNG ? path.resolve(process.env.WOW_CHART_PNG) : path.join(__dirname, "..", "assets", "tmp", "wow_chart.png");
+  if (fs.existsSync(wowChartPath)) {
+    s.addImage({ path: wowChartPath, x: MX, y: 1.55, w: CW, h: CW * (4.6 / 13.6) });
+  } else {
+    s.addText("Graphique non généré — lancer : python scripts/gen_wow_chart.py", {
+      x: MX, y: 3.2, w: CW, h: 0.5, align: "center", margin: 0, fontFace: fBody, italic: true, fontSize: 12, color: MUTE,
+    });
+  }
 }
-wowSlide(6, "Week-over-week — POS", `Volume réalisé / semaine vs objectif · jusqu'à ${CWEEK}`, wow.pos, wow.posObjectif);
-wowSlide(7, "Week-over-week — BA", `Montant réalisé / semaine vs objectif · jusqu'à ${CWEEK}`, wow.ba, wow.baObjectif);
 
 // ════════════════════════════════════════════════════════════════════
-//  SLIDE 8 · CLÔTURE (page de clôture)
+//  SLIDE 7 · ANALYSE BA — TRANSACTIONS, VALEUR & PERSONNES ACTIVES
+//  (diagnostic : pourquoi l'activité BA ralentit-elle ?)
+// ════════════════════════════════════════════════════════════════════
+{
+  const s = pres.addSlide(); light(s);
+  chrome(s, 7, "Analyse · Activité BA semaine par semaine");
+  header(s, "Analyse BA — Transactions & activité", `Nombre de transactions, valeur et personnes actives par semaine · jusqu'à ${CWEEK}`);
+
+  const upliftCell = (curr, prev) => {
+    if (prev == null || !prev) return { text: fmt(curr), color: INK };
+    const d = (curr - prev) / prev * 100;
+    const up = d >= 0;
+    return { text: `${fmt(curr)}  ${up ? "▲" : "▼"} ${up ? "+" : ""}${d.toFixed(1)}%`, color: up ? GREEN : REDX, bold: true };
+  };
+  const rows = baDiag.weeks.map((wk, i) => [
+    wk,
+    upliftCell(baDiag.nbTx[i], i > 0 ? baDiag.nbTx[i - 1] : null),
+    upliftCell(baDiag.montant[i], i > 0 ? baDiag.montant[i - 1] : null),
+    upliftCell(baDiag.actifs[i], i > 0 ? baDiag.actifs[i - 1] : null),
+  ]);
+  const ty = 2.0, tw = CW;
+  table(s, MX, ty, tw, ["SEMAINE", "NB TRANSACTIONS", "MONTANT (FCFA)", "#PERSONNES ACTIVES"], rows, {
+    colWidths: [tw * 0.14, tw * 0.30, tw * 0.30, tw * 0.26], rowH: 0.5, fs: 11, hfs: 10,
+  });
+
+  s.addText("Personnes actives = numéros de téléphone BA distincts ayant réalisé au moins une activation dans la semaine (identifiant stable, indépendant de l'email).", {
+    x: MX, y: ty + baDiag.weeks.length * 0.5 + 0.6, w: tw, h: 0.4, margin: 0, fontFace: fBody, italic: true, fontSize: 10, color: MUTE,
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  SLIDE 8 · RETOURS TERRAIN — répartition des problèmes signalés
+// ════════════════════════════════════════════════════════════════════
+{
+  const s = pres.addSlide(); light(s);
+  chrome(s, 8, "Voix du terrain · Problèmes rencontrés");
+  header(s, "Retours terrain", `Répartition des problèmes signalés · ${retours.total} signalement${retours.total > 1 ? "s" : ""} cumulés`);
+
+  const items = (retours.items || []).slice(0, 10);
+  if (!items.length) {
+    s.addText("Aucun problème signalé sur la période.", {
+      x: MX, y: 3.3, w: CW, h: 0.5, align: "center", margin: 0,
+      fontFace: fBody, fontSize: 14, color: MUTE,
+    });
+  } else {
+    const x = MX, y = 1.9, h = 4.7;
+    const labelW = 5.2, gap = 0.18, barX = x + labelW + gap;
+    const barMaxW = W - MX - barX - 0.9; // place for the % label at the tip
+    const maxPct = Math.max(...items.map(it => it.pct), 1);
+    const rowH = Math.min(0.62, h / items.length);
+    items.forEach((it, i) => {
+      const ry = y + i * rowH;
+      const cy = ry + rowH / 2;
+      const bh = Math.min(0.3, rowH - 0.16);
+      // libellé aligné à droite
+      s.addText(it.label, {
+        x, y: ry, w: labelW, h: rowH, align: "right", valign: "middle", margin: [0, 0.08, 0, 0],
+        fontFace: fBody, fontSize: 9.5, color: INK,
+      });
+      // rail
+      s.addShape(pres.shapes.RECTANGLE, { x: barX, y: cy - bh / 2, w: barMaxW, h: bh, fill: { color: ROW }, line: { type: "none" } });
+      // barre jaune
+      const bw = Math.max(0.04, barMaxW * (it.pct / maxPct));
+      s.addShape(pres.shapes.RECTANGLE, { x: barX, y: cy - bh / 2, w: bw, h: bh, fill: { color: YEL }, line: { type: "none" } });
+      // valeur (count) dans la barre si assez large, sinon au bout
+      // % au bout de la barre
+      s.addText(it.pct.toFixed(1) + "%  (" + it.count + ")", {
+        x: barX + bw + 0.08, y: cy - 0.16, w: 1.4, h: 0.32, align: "left", valign: "middle", margin: 0,
+        fontFace: fHead, bold: true, fontSize: 9.5, color: INK,
+      });
+    });
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  SLIDE 9 · CLÔTURE (page de clôture)
 // ════════════════════════════════════════════════════════════════════
 {
   const s = pres.addSlide(); light(s);
@@ -723,5 +806,5 @@ async function embedFonts() {
     await pres.writeFile({ fileName: out });
     console.warn("⚠️ Fichier principal verrouillé (ouvert ?) — écrit sous un nom alternatif.");
   }
-  console.log(`✅ Done · 8 slides · classement=${CWEEK} · ${out}`);
+  console.log(`✅ Done · ${TOTAL} slides · classement=${CWEEK} · ${out}`);
 })();

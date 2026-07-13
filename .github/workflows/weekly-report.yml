@@ -20,7 +20,12 @@ jobs:
           node-version: 20
           cache: npm
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - run: npm ci
+      - run: pip install -r scripts/requirements.txt
 
       - name: Écrire les données calculées (payload Apps Script)
         env:
@@ -33,10 +38,14 @@ jobs:
           fi
           node -e "JSON.parse(require('fs').readFileSync('inputs/report.json','utf8')); console.log('✓ report.json valide')"
 
+      - name: Générer le graphique Week-over-week (matplotlib)
+        run: python scripts/gen_wow_chart.py inputs/report.json assets/tmp/wow_chart.png
+
       - name: Générer le rapport (.pptx)
         env:
           INPUT_DIR: inputs
           OUT_DIR: outputs
+          WOW_CHART_PNG: assets/tmp/wow_chart.png
         run: node scripts/progress_report_dtc_assisted.js
 
       - name: Identifier le fichier + la semaine
@@ -52,9 +61,12 @@ jobs:
           path: outputs/*.pptx
           if-no-files-found: error
 
-      # Envoi par mail via l'API Gmail (OAuth) — actif si le secret GMAIL_TOKEN_JSON existe
+      # Envoi par mail via l'API Gmail (OAuth) — actif si le secret existe ET si le payload
+      # n'a pas explicitement demandé de ne pas envoyer (client_payload.sendMail === false,
+      # utilisé pour les vérifications manuelles — l'Apps Script en prod ne positionne pas ce champ,
+      # donc son absence = true = envoi normal).
       - name: Envoyer par mail à g.fondzefe@lkaservices.com
-        if: ${{ env.GMAIL_TOKEN_JSON != '' }}
+        if: ${{ env.GMAIL_TOKEN_JSON != '' && github.event.client_payload.sendMail != false }}
         env:
           GMAIL_TOKEN_JSON: ${{ secrets.GMAIL_TOKEN_JSON }}
           MAIL_FILE: ${{ steps.f.outputs.file }}

@@ -1,6 +1,8 @@
 node_modules/
 inputs/*.csv
 inputs/*.json
+inputs_live/
+assets/tmp/
 outputs/*.pptx
 outputs/*.pdf
 *.log

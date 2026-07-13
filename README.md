@@ -1,6 +1,6 @@
 # Rapport hebdomadaire DTC Assisted — MTN Bénin × LKA
 
-Génère le rapport `.pptx` (6 slides). **Répartition des rôles :**
+Génère le rapport `.pptx` (9 slides). **Répartition des rôles :**
 
 - **Apps Script** (chaîne DTC) = lit les données **et fait tous les calculs** (régions, rangs, targets, prime, série jour-par-jour). Il a déjà les données en main.
 - **GitHub Actions / Node** = **dessine uniquement** le `.pptx` (pptxgenjs — la seule chose qu'Apps Script ne sait pas faire).
@@ -35,6 +35,34 @@ node scripts/progress_report_dtc_assisted.js 1 --dump # écrit inputs/report.jso
 
 `--dump` produit exactement le JSON que l'Apps Script doit envoyer (fixture + spec du contrat).
 
+## Récupérer les données LIVE (MySQL) avant un rendu DEV
+
+`inputs/*.csv` est un jeu de test figé (peut être stale). Pour des chiffres réels à jour, interroger directement la base MySQL de la chaîne DTC (celle qui alimente aussi les Sheets) :
+
+```bash
+python scripts/fetch_live_data.py                       # → ./inputs_live/{classement,tsa_ref,form}.csv
+python scripts/fetch_live_data.py --out /autre/dossier
+```
+
+Nécessite `pymysql` (`pip install pymysql`). Credentials MySQL dans `D:\LKA\DTC Pushed\.env` (chaîne LKA×MTN — voir mémoire `dtc-data-pipeline`), avec retry intégré (la base est connue pour être flaky). Source directe : vue `v_classement_tsa_semaine` (Prime&Rang/POS), table `tsa_reference_mtn` (cibles POS), table `dtc_ba_activations` (activations BA — **déjà en MySQL**, inutile de passer par un export du Form Google). Puis pointer `INPUT_DIR` vers ce dossier pour n'importe quel script de rendu :
+
+```bash
+INPUT_DIR=./inputs_live node scripts/progress_report_dtc_assisted.js 3
+INPUT_DIR=./inputs_live node scripts/monthly_report_dtc_assisted.js 2026-06
+```
+
+## Rapport MENSUEL (POS + BA)
+
+```bash
+node scripts/monthly_report_dtc_assisted.js          # mois du dernier Timestamp du form.csv
+node scripts/monthly_report_dtc_assisted.js 2026-07  # forcer un mois (AAAA-MM)
+# → ./outputs/Progress_Report_DTC_Assisted_LKA_Mensuel_AAAAMM.pptx
+```
+
+2 slides seulement (Activations POS + Activations BA), même style que l'hebdo, agrégées sur un **mois calendaire** borné au démarrage réel du programme (15 juin 2026 — donc juin 2026 = fenêtre 15→30 juin ; les mois suivants couvrent le mois complet). Objectif du mois = objectif **journalier** (même taux que l'hebdo, TSA_REF pour le POS / 1,5M réparti par effectif pour le BA) **× nombre de jours de la fenêtre** — jours ouvrés hors dimanche pour le BA (comme l'hebdo ×6/7), tous les jours pour le POS (comme l'hebdo ×7/7). Réalisé POS = somme des "Semaine N" du classement dont la période chevauche la fenêtre (le classement n'a pas de date par ligne). Réalisé BA = form filtré par Timestamp sur la fenêtre ; le graphique "rythme journalier" couvre alors tout le mois (pas juste 7 jours).
+
+Mode DEV uniquement pour l'instant (lit les mêmes CSV que l'hebdo dans `inputs/`) — pas encore automatisé/câblé à l'Apps Script ; à faire plus tard si besoin d'un envoi mensuel automatique. Le thème/palette/helpers pptx partagés avec l'hebdo sont dans `scripts/lib/theme.js` (à réutiliser pour tout futur script de rendu — ne pas redupliquer les constantes).
+
 ## Côté Apps Script (chaîne `DTC Pushed`)
 
 1. Coller `appscript/compute_and_trigger.gs` dans le projet Apps Script lié au classeur (`CLASSEMENT_TSA` + `TSA_REF`).
@@ -61,4 +89,5 @@ node scripts/progress_report_dtc_assisted.js 1 --dump # écrit inputs/report.jso
 - **Objectif BA** : 1,5 M/jour global, réparti par % d'effectif régional.
 - **Prime TSA** : n°1 de sa région **ET** volume ≥ 450 000 FCFA.
 - **Semaine** : par défaut, la dernière `SEMAINE` présente dans le classement.
-- Slides : Couverture · Recrutement · Activations POS · Prime & Rang · Activations BA · Clôture.
+- **Retours terrain** : répartition cumulée (toutes semaines) des réponses à « Quel est le problème principal rencontré ? » du Form, classées en 9 catégories + « Divers / Autres » (les « non / RAS / aucun » sont exclus).
+- Slides : Couverture · Recrutement · Activations POS · Prime & Rang · Activations BA · WoW POS · WoW BA · Retours terrain · Clôture.

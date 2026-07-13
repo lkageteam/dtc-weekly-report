@@ -36,7 +36,7 @@ var RPT_BA_WORK_DAYS    = 6;           // les BA travaillent 6 jours/semaine →
 var RPT_PRIME_THRESHOLD = 450000;      // prime TSA : n°1 régional ET volume ≥ ce seuil
 var RPT_PROGRAMME_START = new Date(2026, 5, 12); // 12 juin 2026 — ancre POS (ven→jeu)
 var RPT_BA_START        = new Date(2026, 5, 15); // 15 juin 2026 — ancre BA (lun→dim)
-var RPT_NOTE_ACTIVATIONS = "Certains BA recrutés n'ont pas été activés immédiatement en raison de l'absence du dress code (non fourni par MTN) ; l'agence a eu recours à son fournisseur pour pallier ce challenge.";
+var RPT_NOTE_ACTIVATIONS = "";
 var RPT_NOTE_CLOTURE     = "Maintenir le rythme jour-par-jour · Soutenir le week-end · Convertir le Top des POS";
 
 function buildAndTriggerReport(semaineArg) {
@@ -134,6 +134,7 @@ function buildReportData_(semaineArg) {
   var formRows = _rptRows_(_rptSheetByGid_(SpreadsheetApp.openById(FORM_SS_ID), FORM_GID));
   var hk = formRows.length ? formRows[0] : {};
   var kReg = _rptKey_(hk, /Region/i), kMont = _rptKey_(hk, /Montant/i), kTs = _rptKey_(hk, /Timestamp|Horodat/i);
+  var kNum = _rptKey_(hk, /num.*ro.*du.*ba|numero_ba/i); // identifiant stable (téléphone) pour compter les BA actifs
   var totalEff = 0; RPT_REGIONS.forEach(function (r) { totalEff += RPT_EFFECTIF[r]; });
   var winEnd = new Date(cy.baEnd.getTime() + 86400000 - 1); // inclut tout le dernier jour
   var baAgg = {}; RPT_REGIONS.forEach(function (r) { baAgg[r] = { act: 0, mont: 0 }; });
@@ -154,15 +155,28 @@ function buildReportData_(semaineArg) {
   // WEEK ON WEEK : réalisé par semaine 1..N (POS depuis classement, BA depuis form, fenêtres lun→dim)
   var N = parseInt(String(semaine).replace(/\D/g, ''), 10) || 1;
   var wow = { weeks: [], pos: [], ba: [], posObjectif: objectifTSA, baObjectif: RPT_BA_DAILY_GLOBAL * RPT_BA_WORK_DAYS };
+  // Diagnostic BA : volume (nb transactions), valeur (montant) et #personnes actives (numéros distincts) par semaine
+  var baDiag = { weeks: [], nbTx: [], montant: [], actifs: [] };
   for (var k = 1; k <= N; k++) {
     wow.weeks.push('S' + k);
     var wk = 'Semaine ' + k, vp = 0;
     classement.forEach(function (r) { if (String(r.SEMAINE).trim() === wk) vp += _rptNum_(r.VOLUME_XAF); });
     wow.pos.push(vp);
-    var ws = new Date(RPT_BA_START.getTime() + (k - 1) * 7 * 86400000), we = new Date(ws.getTime() + 7 * 86400000 - 1), vb = 0;
-    formRows.forEach(function (r) { var reg = String(r[kReg] || '').trim().toUpperCase(); if (!RPT_EFFECTIF[reg]) return; var d = r[kTs]; if (!(d instanceof Date)) d = _rptDate_(d); if (d && d >= ws && d <= we) vb += _rptNum_(r[kMont]); });
+    var ws = new Date(RPT_BA_START.getTime() + (k - 1) * 7 * 86400000), we = new Date(ws.getTime() + 7 * 86400000 - 1), vb = 0, nbTx = 0;
+    var actifsSet = {};
+    formRows.forEach(function (r) {
+      var reg = String(r[kReg] || '').trim().toUpperCase(); if (!RPT_EFFECTIF[reg]) return;
+      var d = r[kTs]; if (!(d instanceof Date)) d = _rptDate_(d); if (!d || d < ws || d > we) return;
+      vb += _rptNum_(r[kMont]); nbTx++;
+      var numBA = String(r[kNum] || '').trim().toUpperCase(); if (numBA) actifsSet[numBA] = true;
+    });
     wow.ba.push(vb);
+    baDiag.weeks.push('S' + k); baDiag.nbTx.push(nbTx); baDiag.montant.push(vb); baDiag.actifs.push(Object.keys(actifsSet).length);
   }
+
+  // RETOURS TERRAIN : répartition cumulée des problèmes signalés (toutes semaines)
+  var kProb = _rptKey_(hk, /probl.*principal|principal.*rencontr/i);
+  var retours = _rptRetours_(formRows, kProb);
 
   // assemblage
   var pos = {}, baRows = {}, recrutement = {};
@@ -176,8 +190,53 @@ function buildReportData_(semaineArg) {
     recrutement: recrutement, primeThreshold: RPT_PRIME_THRESHOLD, objectifTSA: objectifTSA, pos: pos, prime: prime,
     ba: { workDays: RPT_BA_WORK_DAYS, dailyObjectif: RPT_BA_DAILY_GLOBAL, rows: baRows, days: days },
     wow: wow,
+    retours: retours,
+    baDiag: baDiag,
     notes: { activations: RPT_NOTE_ACTIVATIONS, cloture: RPT_NOTE_CLOTURE },
   };
+}
+
+// ─── Retours Terrain : classification des problèmes (Form) ───────────
+var RPT_RETOUR_LABELS = [
+  "Lenteur du message flash / prompt / validation",
+  "Le prompt de validation ne vient pas du tout",
+  "Compte débité mais le prompt n'arrive pas chez le client",
+  "Erreur de code PIN lors de la liaison/validation",
+  "Client/abonné ne se présente pas avec son téléphone (ou refuse de le donner / de confirmer)",
+  "Problème avec la SIM rattachée (ne fonctionne pas / échoue)",
+  "Problème avec la SIM marchand (permutation, non éligible)",
+  "Le numéro du client/abonné n'apparaît pas dans le message/SMS retour côté POS",
+  "Demande relative au versement des commissions sur le compte commission",
+];
+var RPT_RETOUR_AUTRES = "Divers / Autres";
+function _rptNormStr_(s) { return String(s == null ? '' : s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim(); }
+function _rptClassifyRetour_(raw) {
+  var t = _rptNormStr_(raw);
+  if (!t) return null;
+  if (/^(non|aucun|ras|r\.a\.s|rien|pas de probleme|aucun probleme|n\/?a)\b/.test(t)) return null;
+  for (var i = 0; i < RPT_RETOUR_LABELS.length; i++) if (_rptNormStr_(RPT_RETOUR_LABELS[i]) === t) return RPT_RETOUR_LABELS[i];
+  if (/commission|versement/.test(t)) return RPT_RETOUR_LABELS[8];
+  if (/marchand|permut|eligib/.test(t)) return RPT_RETOUR_LABELS[6];
+  if (/sim/.test(t)) return RPT_RETOUR_LABELS[5];
+  if (/\bpin\b|code pin/.test(t)) return RPT_RETOUR_LABELS[3];
+  if (/numero.*(apparait|apparait pas)|sms.*retour|message.*retour|retour.*pos/.test(t)) return RPT_RETOUR_LABELS[7];
+  if (/debit|defalqu|compte.*(debit|defalqu)|debite.*prompt/.test(t)) return RPT_RETOUR_LABELS[2];
+  if (/(prompt|validation).*(ne vient|n.?arrive|pas du tout)|ne vient pas/.test(t)) return RPT_RETOUR_LABELS[1];
+  if (/telephone|presente|refuse|confirmer|papier|mefian/.test(t)) return RPT_RETOUR_LABELS[4];
+  if (/lenteur|lent|flash|prompt|validation/.test(t)) return RPT_RETOUR_LABELS[0];
+  return RPT_RETOUR_AUTRES;
+}
+function _rptRetours_(formRows, kProb) {
+  if (!kProb) return { total: 0, items: [] };
+  var counts = {}, total = 0;
+  formRows.forEach(function (r) {
+    var lbl = _rptClassifyRetour_(r[kProb]); if (!lbl) return;
+    counts[lbl] = (counts[lbl] || 0) + 1; total++;
+  });
+  var items = Object.keys(counts).map(function (label) {
+    return { label: label, count: counts[label], pct: total ? Math.round(counts[label] / total * 1000) / 10 : 0 };
+  }).sort(function (a, b) { return b.count - a.count; });
+  return { total: total, items: items };
 }
 
 // ───────────────────────────── helpers ─────────────────────────────
