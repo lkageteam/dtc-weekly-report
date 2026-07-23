@@ -5,6 +5,8 @@ inputs_live/
 assets/tmp/
 outputs/*.pptx
 outputs/*.pdf
+*.pptx
+~$*
 *.log
 .env
 .DS_Store
