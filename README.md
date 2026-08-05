@@ -51,7 +51,7 @@ INPUT_DIR=./inputs_live node scripts/progress_report_dtc_assisted.js 3
 INPUT_DIR=./inputs_live node scripts/monthly_report_dtc_assisted.js 2026-06
 ```
 
-## Rapport MENSUEL (POS + BA)
+## Rapport MENSUEL (deck complet)
 
 ```bash
 node scripts/monthly_report_dtc_assisted.js          # mois du dernier Timestamp du form.csv
@@ -59,9 +59,15 @@ node scripts/monthly_report_dtc_assisted.js 2026-07  # forcer un mois (AAAA-MM)
 # → ./outputs/Progress_Report_DTC_Assisted_LKA_Mensuel_AAAAMM.pptx
 ```
 
-2 slides seulement (Activations POS + Activations BA), même style que l'hebdo, agrégées sur un **mois calendaire** borné au démarrage réel du programme (15 juin 2026 — donc juin 2026 = fenêtre 15→30 juin ; les mois suivants couvrent le mois complet). Objectif du mois = objectif **journalier** (même taux que l'hebdo, TSA_REF pour le POS / 1,5M réparti par effectif pour le BA) **× nombre de jours de la fenêtre** — jours ouvrés hors dimanche pour le BA (comme l'hebdo ×6/7), tous les jours pour le POS (comme l'hebdo ×7/7). Réalisé POS = somme des "Semaine N" du classement dont la période chevauche la fenêtre (le classement n'a pas de date par ligne). Réalisé BA = form filtré par Timestamp sur la fenêtre ; le graphique "rythme journalier" couvre alors tout le mois (pas juste 7 jours).
+**8 slides**, miroir de l'hebdo : Couverture · Recrutement · Activations POS · Prime & Rang (mois) · Activations BA · Month-over-month · Analyse BA · Clôture. Tout est agrégé sur un **mois calendaire** borné au démarrage réel du programme (POS 12 juin, BA 15 juin 2026 — donc juin = fenêtre partielle ; les mois suivants couvrent le mois complet).
 
-Mode DEV uniquement pour l'instant (lit les mêmes CSV que l'hebdo dans `inputs/`) — pas encore automatisé/câblé à l'Apps Script ; à faire plus tard si besoin d'un envoi mensuel automatique. Le thème/palette/helpers pptx partagés avec l'hebdo sont dans `scripts/lib/theme.js` (à réutiliser pour tout futur script de rendu — ne pas redupliquer les constantes).
+- **Objectif du mois** = objectif **journalier** (même taux que l'hebdo : TSA_REF pour le POS, 1,5 M réparti par effectif pour le BA) **× nombre de jours de la fenêtre** — jours ouvrés hors dimanche pour le BA (comme l'hebdo ×6/7), tous les jours pour le POS (×7/7).
+- **Réalisé POS** = somme des "Semaine N" du classement dont la période chevauche la fenêtre (le classement n'a pas de date par ligne) — une semaine à cheval compte dans les **deux** mois ; les semaines retenues sont listées en note de bas de slide.
+- **Prime & Rang mensuel** : n°1 régional sur le **cumul du mois** (le `RANG_REGIONAL` du classement est hebdo, il ne s'applique pas) ; seuil de prime mensualisé = 450 000 × nb de semaines retenues.
+- **Month-over-month** : dessiné nativement, chaque mois rapporté à **son** objectif → on compare des **taux** (pt de %), pas des volumes bruts (les mois n'ont pas la même durée). On ne réutilise pas `gen_wow_chart.py` ici : ses deux axes (variance % / absolu) centrés sur 0 font coïncider la barre de variance avec la ligne d'objectif dès que l'objectif domine l'échelle — illisible avec 2-3 mois.
+- **Pas de slide « Retours terrain »** : elle vient de la colonne « problème principal » de l'export Google Form, qui n'est pas mirrorée dans la table MySQL `dtc_ba_activations` (seule source des données live).
+
+Mode DEV uniquement (lit les mêmes CSV que l'hebdo) — pas câblé à l'Apps Script ni à la CI ; à faire si besoin d'un envoi mensuel automatique. Le thème/palette/helpers pptx partagés avec l'hebdo sont dans `scripts/lib/theme.js` (à réutiliser pour tout futur script de rendu — ne pas redupliquer les constantes).
 
 ## Côté Apps Script (chaîne `DTC Pushed`)
 
