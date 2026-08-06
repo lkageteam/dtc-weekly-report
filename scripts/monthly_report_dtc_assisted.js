@@ -455,31 +455,68 @@ const tauxColor = p => p >= 90 ? GREEN : p >= 50 ? AMBER : REDX;
     { title: "POS — Volume réalisé", real: m => m.volTotal, obj: m => m.posObjectif, unit: m => `${m.win.posDays} j` },
     { title: "BA — Montant réalisé", real: m => m.baMont, obj: m => m.baObjectif, unit: m => `${m.win.workDays} j ouvrés` },
   ];
-  const pw = (CW - 0.6) / 2, py0 = 1.7;
-  panels.forEach((P, pi) => {
-    const px = MX + pi * (pw + 0.6);
-    s.addText(P.title, { x: px, y: py0, w: pw, h: 0.3, margin: 0, fontFace: fHead, bold: true, fontSize: 13, color: INK });
-    s.addShape(pres.shapes.RECTANGLE, { x: px, y: py0 + 0.34, w: pw, h: 0.014, fill: { color: LINE }, line: { type: "none" } });
+  const pw = (CW - 0.7) / 2, py0 = 1.72;
+  const axisW = 1.15;                     // colonne des libellés de mois (axe des catégories)
+  const plotTop = py0 + 0.52;
+  // échelle commune aux deux panneaux : 0 → au moins 100 % (arrondi aux 20 pt supérieurs)
+  const maxPct = Math.max(100, ...panels.flatMap(P => monthsSeries.map(m => P.obj(m) ? P.real(m) / P.obj(m) * 100 : 0)));
+  const scaleMax = Math.ceil(maxPct / 20) * 20;
+  const ticks = []; for (let t = 0; t <= scaleMax; t += 20) ticks.push(t);
+  // la hauteur du graphique suit le nombre de mois (sinon 2 barres flottent dans un cadre vide) ;
+  // bornée pour qu'une année entière tienne encore sous les notes de bas de slide.
+  const nMonths = monthsSeries.length;
+  const groupH = Math.max(0.35, Math.min(1.0, (5.95 - plotTop) / nMonths));
+  const plotBot = plotTop + nMonths * groupH;
 
-    const rowH = Math.min(1.35, 4.3 / Math.max(1, monthsSeries.length));
+  panels.forEach((P, pi) => {
+    const px = MX + pi * (pw + 0.7);
+    const plotX = px + axisW, plotW = pw - axisW;
+    s.addText(P.title, { x: px, y: py0, w: pw, h: 0.3, margin: 0, fontFace: fHead, bold: true, fontSize: 13, color: INK });
+
+    // — grille verticale + graduations (axe des valeurs, en % de l'objectif du mois) —
+    ticks.forEach(t => {
+      const gx = plotX + (t / scaleMax) * plotW;
+      s.addShape(pres.shapes.RECTANGLE, { x: gx, y: plotTop, w: 0.008, h: plotBot - plotTop, fill: { color: t === 100 ? MUTE2 : LINE }, line: { type: "none" } });
+      s.addText(t + " %", { x: gx - 0.35, y: plotBot + 0.06, w: 0.7, h: 0.22, margin: 0, fontFace: fBody, fontSize: 8, color: t === 100 ? INK : MUTE2, align: "center" });
+    });
+    s.addText("objectif", { x: plotX + (100 / scaleMax) * plotW - 0.45, y: plotTop - 0.24, w: 0.9, h: 0.2, margin: 0, fontFace: fBody, fontSize: 7.5, color: MUTE2, align: "center" });
+    // axe des catégories (ligne de base commune à gauche)
+    s.addShape(pres.shapes.RECTANGLE, { x: plotX, y: plotTop, w: 0.014, h: plotBot - plotTop, fill: { color: INK }, line: { type: "none" } });
+
+    // — une barre par mois —
+    const barH = Math.min(0.44, groupH * 0.42);
     monthsSeries.forEach((m, i) => {
       const real = P.real(m), obj = P.obj(m), pct = obj ? real / obj * 100 : 0;
       const c = tauxColor(pct);
-      const y = py0 + 0.55 + i * rowH;
-      // libellé du mois + fenêtre
-      s.addText(m.win.short + (m.win.partial ? " *" : ""), { x: px, y, w: pw * 0.42, h: 0.26, margin: 0, fontFace: fHead, bold: true, fontSize: 11.5, color: INK });
-      s.addText(`objectif ${M(obj)} · ${P.unit(m)}`, { x: px + pw * 0.42, y: y + 0.02, w: pw * 0.58, h: 0.24, margin: 0, fontFace: fBody, fontSize: 8.5, color: MUTE2, align: "right" });
-      // piste = objectif du mois ; remplissage = réalisé (échelle propre au mois → taux comparables)
-      const barY = y + 0.32, barH = 0.34;
-      s.addShape(pres.shapes.RECTANGLE, { x: px, y: barY, w: pw, h: barH, fill: { color: ROW }, line: { type: "none" } });
-      s.addShape(pres.shapes.RECTANGLE, { x: px, y: barY, w: Math.max(0.03, Math.min(1, pct / 100) * pw), h: barH, fill: { color: c }, line: { type: "none" } });
-      s.addText(`${M(real)}   ${pct.toFixed(1)} %`, { x: px + 0.1, y: barY, w: pw - 0.2, h: barH, margin: 0, fontFace: fHead, bold: true, fontSize: 10, color: pct >= 45 ? "FFFFFF" : INK, valign: "middle" });
-      // variation m/m (le taux, pas le volume brut : seul comparable quand les mois n'ont pas la même durée)
+      const cy = plotTop + i * groupH + groupH / 2;      // centre de la barre
+      const barY = cy - barH / 2;
+      const bw = Math.max(0.03, (Math.min(pct, scaleMax) / scaleMax) * plotW);
+
+      // libellé du mois (axe) + rappel de l'objectif de CE mois
+      s.addText(m.win.short + (m.win.partial ? " *" : ""), {
+        x: px, y: cy - 0.3, w: axisW - 0.12, h: 0.26, margin: 0,
+        fontFace: fHead, bold: true, fontSize: 11.5, color: INK, align: "right", valign: "middle",
+      });
+      s.addText(`obj. ${M(obj)} · ${P.unit(m)}`, {
+        x: px - 0.15, y: cy - 0.02, w: axisW + 0.03, h: 0.22, margin: 0,
+        fontFace: fBody, fontSize: 7.5, color: MUTE2, align: "right", valign: "middle",
+      });
+
+      s.addShape(pres.shapes.RECTANGLE, { x: plotX, y: barY, w: bw, h: barH, fill: { color: c }, line: { type: "none" } });
+      // valeur : au bout de la barre, ou dedans (blanc) s'il ne reste plus la place
+      const lbl = `${M(real)}  ·  ${pct.toFixed(1)} %`;
+      const room = plotW - bw;
+      if (room >= 1.35) s.addText(lbl, { x: plotX + bw + 0.08, y: barY, w: room - 0.08, h: barH, margin: 0, fontFace: fHead, bold: true, fontSize: 10, color: INK, valign: "middle" });
+      else s.addText(lbl, { x: plotX + 0.1, y: barY, w: bw - 0.2, h: barH, margin: 0, fontFace: fHead, bold: true, fontSize: 10, color: "FFFFFF", align: "right", valign: "middle" });
+
+      // variation m/m en points de taux (seul comparable : les mois n'ont pas la même durée)
       if (i > 0) {
-        const pp = P.obj(monthsSeries[i - 1]) ? P.real(monthsSeries[i - 1]) / P.obj(monthsSeries[i - 1]) * 100 : 0;
+        const prev = monthsSeries[i - 1];
+        const pp = P.obj(prev) ? P.real(prev) / P.obj(prev) * 100 : 0;
         const d = pct - pp, up = d >= 0;
-        s.addText(`${up ? "▲" : "▼"} ${up ? "+" : ""}${d.toFixed(1)} pt vs ${monthsSeries[i - 1].win.short.toLowerCase()}`, {
-          x: px, y: barY + barH + 0.04, w: pw, h: 0.24, margin: 0, fontFace: fHead, bold: true, fontSize: 9, color: up ? GREEN : REDX,
+        s.addText(`${up ? "▲" : "▼"} ${up ? "+" : ""}${d.toFixed(1)} pt vs ${prev.win.short.toLowerCase()}`, {
+          x: plotX + 0.02, y: barY + barH + 0.02, w: plotW, h: 0.22, margin: 0,
+          fontFace: fHead, bold: true, fontSize: 8.5, color: up ? GREEN : REDX,
         });
       }
     });
