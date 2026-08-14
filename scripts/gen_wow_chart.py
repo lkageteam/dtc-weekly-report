@@ -35,12 +35,13 @@ GREEN = "#2E9E4F"; REDX = "#D1453B"; YELDK = "#E0B400"
 #: Le calcul, lui, continue de porter sur toute l'histoire (voir `draw_panel`).
 FENETRE = 5
 
-BA_START = date(2026, 6, 15)  # 15 juin 2026 — ancre BA (lun→dim)
+POS_START = date(2026, 6, 12)  # 12 juin 2026 — ancre POS (ven→jeu)
+BA_START = date(2026, 6, 15)   # 15 juin 2026 — ancre BA (lun→dim)
 MOIS_AB = ["janv", "févr", "mars", "avr", "mai", "juin", "juil", "août", "sept", "oct", "nov", "déc"]
 
 
-def week_to_periode(w):
-    """Convertit un libellé de semaine ('S8', 'Semaine 8', 8) en période ('3 – 9 août')."""
+def week_to_periode(w, anchor_date=BA_START):
+    """Convertit un libellé de semaine ('S8', 'Semaine 8', 8) en période ('31 juil – 6 août' pour POS ou '3 – 9 août' pour BA)."""
     if not w:
         return ""
     # Si c'est déjà un libellé de période (contient un tiret/espace et un mois abrégé), on le garde
@@ -53,7 +54,7 @@ def week_to_periode(w):
     k = int(m.group(0))
     if k < 1:
         return sw
-    ws = BA_START + timedelta(days=(k - 1) * 7)
+    ws = anchor_date + timedelta(days=(k - 1) * 7)
     we = ws + timedelta(days=6)
     m1 = MOIS_AB[ws.month - 1]
     m2 = MOIS_AB[we.month - 1]
@@ -183,17 +184,24 @@ def main():
 
     data = json.loads(report_path.read_text(encoding="utf-8"))
     wow = data.get("wow") or {}
-    # Périodes (« 3 – 9 août ») : utilisées si fournies par le producteur (wow.periodes),
-    # sinon déduites directement depuis les identifiants de semaines (ex. 'S8' → '3 – 9 août')
-    # avec l'ancre du programme (15 juin 2026).
-    raw_periodes = wow.get("periodes")
-    if raw_periodes and any(raw_periodes):
-        weeks = [week_to_periode(w) for w in raw_periodes]
-    else:
-        raw_weeks = wow.get("weeks") or []
-        weeks = [week_to_periode(w) for w in raw_weeks]
+    # Périodes : calculées avec leurs ancres respectives :
+    # • POS : ven→jeu (ancré au 12 juin 2026, ex: '31 juil – 6 août')
+    # • BA  : lun→dim (ancré au 15 juin 2026, ex: '3 – 9 août')
+    raw_weeks = wow.get("weeks") or []
+    raw_pos = wow.get("periodesPos")
+    raw_ba = wow.get("periodesBa") or wow.get("periodes")
 
-    if len(weeks) < 2:
+    if raw_pos and any(raw_pos):
+        weeks_pos = [week_to_periode(w, POS_START) for w in raw_pos]
+    else:
+        weeks_pos = [week_to_periode(w, POS_START) for w in raw_weeks]
+
+    if raw_ba and any(raw_ba):
+        weeks_ba = [week_to_periode(w, BA_START) for w in raw_ba]
+    else:
+        weeks_ba = [week_to_periode(w, BA_START) for w in raw_weeks]
+
+    if len(weeks_pos) < 2 and len(weeks_ba) < 2:
         print("⚠️ Pas assez de semaines pour un graphique WoW (< 2) — aucun PNG généré.")
         return
 
@@ -202,8 +210,8 @@ def main():
     fig.patch.set_alpha(0)
     axL2, axR2 = axL.twinx(), axR.twinx()
 
-    draw_panel(axL, axL2, "POS — Volume réalisé", weeks, wow.get("pos") or [], wow.get("posObjectif"), fam_bold)
-    draw_panel(axR, axR2, "BA — Montant réalisé", weeks, wow.get("ba") or [], wow.get("baObjectif"), fam_bold)
+    draw_panel(axL, axL2, "POS — Volume réalisé", weeks_pos, wow.get("pos") or [], wow.get("posObjectif"), fam_bold)
+    draw_panel(axR, axR2, "BA — Montant réalisé", weeks_ba, wow.get("ba") or [], wow.get("baObjectif"), fam_bold)
 
     # légende partagée en haut de figure
     handles = [

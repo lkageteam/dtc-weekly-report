@@ -269,16 +269,17 @@ function computeFromCSV() {
 
   // ── WEEK ON WEEK : réalisé par semaine 1..N (POS depuis classement, BA depuis form) ──
   const N = weekNum(CWEEK) || 1;
-  const wow = { weeks: [], periodes: [], pos: [], ba: [], posObjectif: objectifTSA, baObjectif: CONFIG.baDailyGlobal * CONFIG.baWorkDays };
+  const wow = { weeks: [], periodes: [], periodesPos: [], periodesBa: [], pos: [], ba: [], posObjectif: objectifTSA, baObjectif: CONFIG.baDailyGlobal * CONFIG.baWorkDays };
   // Diagnostic BA : volume (nb transactions), valeur (montant) et #personnes actives (numero_ba distincts) par semaine
   const baDiag = { weeks: [], nbTx: [], montant: [], actifs: [] };
   for (let k = 1; k <= N; k++) {
     wow.weeks.push("S" + k);
     wow.pos.push(classement.filter(r => r.SEMAINE === "Semaine " + k).reduce((s, r) => s + num(r.VOLUME_XAF), 0));
+    const ps = new Date(PROGRAMME_START.getTime() + (k - 1) * 7 * 86400000), pe = new Date(ps.getTime() + 6 * 86400000);
     const ws = new Date(BA_START.getTime() + (k - 1) * 7 * 86400000), we = new Date(ws.getTime() + 7 * 86400000 - 1);
-    // Libellé de PÉRIODE (fenêtre BA lun→dim), affiché sur l'axe du graphique WoW à la
-    // place de « S8 » : une date se lit sans avoir à connaître l'ancre du programme.
-    // Le numéro de semaine n'est pas perdu — il reste dans le sous-titre de la planche.
+    // Libellés de PÉRIODE respectifs (POS: ven→jeu, BA: lun→dim) pour chaque axe
+    wow.periodesPos.push(libellePeriode(ps, pe));
+    wow.periodesBa.push(libellePeriode(ws, we));
     wow.periodes.push(libellePeriode(ws, we));
     let m = 0, nbTx = 0; const actifsSet = new Set();
     form.forEach(r => {

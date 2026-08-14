@@ -152,9 +152,9 @@ function buildReportData_(semaineArg) {
     return { label: JOURS[dd.getDay()] + ' ' + dd.getDate(), mont: dayMap[k], pct: Math.round(dayMap[k] / RPT_BA_DAILY_GLOBAL * 1000) / 10 };
   });
 
-  // WEEK ON WEEK : réalisé par semaine 1..N (POS depuis classement, BA depuis form, fenêtres lun→dim)
+  // WEEK ON WEEK : réalisé par semaine 1..N (POS depuis classement, BA depuis form)
   var N = parseInt(String(semaine).replace(/\D/g, ''), 10) || 1;
-  var wow = { weeks: [], periodes: [], pos: [], ba: [], posObjectif: objectifTSA, baObjectif: RPT_BA_DAILY_GLOBAL * RPT_BA_WORK_DAYS };
+  var wow = { weeks: [], periodes: [], periodesPos: [], periodesBa: [], pos: [], ba: [], posObjectif: objectifTSA, baObjectif: RPT_BA_DAILY_GLOBAL * RPT_BA_WORK_DAYS };
   // Diagnostic BA : volume (nb transactions), valeur (montant) et #personnes actives (numéros distincts) par semaine
   var baDiag = { weeks: [], nbTx: [], montant: [], actifs: [] };
   for (var k = 1; k <= N; k++) {
@@ -162,9 +162,11 @@ function buildReportData_(semaineArg) {
     var wk = 'Semaine ' + k, vp = 0;
     classement.forEach(function (r) { if (String(r.SEMAINE).trim() === wk) vp += _rptNum_(r.VOLUME_XAF); });
     wow.pos.push(vp);
+    var ps = new Date(RPT_PROGRAMME_START.getTime() + (k - 1) * 7 * 86400000), pe = new Date(ps.getTime() + 6 * 86400000);
     var ws = new Date(RPT_BA_START.getTime() + (k - 1) * 7 * 86400000), we = new Date(ws.getTime() + 7 * 86400000 - 1), vb = 0, nbTx = 0;
-    // Libellé de PÉRIODE affiché sur l'axe du graphique WoW à la place de « S8 ».
-    // `we` porte 23:59:59.999 du dimanche : getDate() rend bien le jour de clôture.
+    // Libellés de PÉRIODE respectifs (POS: ven→jeu, BA: lun→dim) pour chaque axe du graphique WoW
+    wow.periodesPos.push(_rptLibellePeriode_(ps, pe));
+    wow.periodesBa.push(_rptLibellePeriode_(ws, we));
     wow.periodes.push(_rptLibellePeriode_(ws, we));
     var actifsSet = {};
     formRows.forEach(function (r) {
