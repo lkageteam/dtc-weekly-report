@@ -15,7 +15,9 @@
 #  à l'intérieur de l'échelle des barres de %.
 # ════════════════════════════════════════════════════════════════════
 import json
+import re
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 import matplotlib
@@ -32,6 +34,32 @@ GREEN = "#2E9E4F"; REDX = "#D1453B"; YELDK = "#E0B400"
 #: Nombre de semaines AFFICHÉES — fenêtre glissante sur les plus récentes.
 #: Le calcul, lui, continue de porter sur toute l'histoire (voir `draw_panel`).
 FENETRE = 5
+
+BA_START = date(2026, 6, 15)  # 15 juin 2026 — ancre BA (lun→dim)
+MOIS_AB = ["janv", "févr", "mars", "avr", "mai", "juin", "juil", "août", "sept", "oct", "nov", "déc"]
+
+
+def week_to_periode(w):
+    """Convertit un libellé de semaine ('S8', 'Semaine 8', 8) en période ('3 – 9 août')."""
+    if not w:
+        return ""
+    # Si c'est déjà un libellé de période (contient un tiret/espace et un mois abrégé), on le garde
+    sw = str(w).strip()
+    if any(m in sw.lower() for m in MOIS_AB) and ("–" in sw or "-" in sw):
+        return sw
+    m = re.search(r"\d+", sw)
+    if not m:
+        return sw
+    k = int(m.group(0))
+    if k < 1:
+        return sw
+    ws = BA_START + timedelta(days=(k - 1) * 7)
+    we = ws + timedelta(days=6)
+    m1 = MOIS_AB[ws.month - 1]
+    m2 = MOIS_AB[we.month - 1]
+    if m1 == m2:
+        return f"{ws.day} – {we.day} {m1}"
+    return f"{ws.day} {m1} – {we.day} {m2}"
 
 
 def register_fonts():
@@ -155,10 +183,16 @@ def main():
 
     data = json.loads(report_path.read_text(encoding="utf-8"))
     wow = data.get("wow") or {}
-    # `periodes` (« 3 – 9 août ») remplace `weeks` (« S8 ») quand le producteur la
-    # fournit. Le repli sur `weeks` garde le graphique fonctionnel avec un
-    # report.json produit avant ce changement.
-    weeks = wow.get("periodes") or wow.get("weeks") or []
+    # Périodes (« 3 – 9 août ») : utilisées si fournies par le producteur (wow.periodes),
+    # sinon déduites directement depuis les identifiants de semaines (ex. 'S8' → '3 – 9 août')
+    # avec l'ancre du programme (15 juin 2026).
+    raw_periodes = wow.get("periodes")
+    if raw_periodes and any(raw_periodes):
+        weeks = [week_to_periode(w) for w in raw_periodes]
+    else:
+        raw_weeks = wow.get("weeks") or []
+        weeks = [week_to_periode(w) for w in raw_weeks]
+
     if len(weeks) < 2:
         print("⚠️ Pas assez de semaines pour un graphique WoW (< 2) — aucun PNG généré.")
         return
