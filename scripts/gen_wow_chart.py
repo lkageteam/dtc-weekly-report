@@ -29,6 +29,10 @@ ROOT = Path(__file__).parent.parent
 BG = "#FFFFFF"; INK = "#1A1A1A"; MUTE = "#6B6B6B"; MUTE2 = "#9A9A9A"; LINE = "#E4E4E4"
 GREEN = "#2E9E4F"; REDX = "#D1453B"; YELDK = "#E0B400"
 
+#: Nombre de semaines AFFICHÉES — fenêtre glissante sur les plus récentes.
+#: Le calcul, lui, continue de porter sur toute l'histoire (voir `draw_panel`).
+FENETRE = 5
+
 
 def register_fonts():
     reg = ROOT / "fonts" / "MTNBrighterSans-Regular.ttf"
@@ -52,10 +56,25 @@ def fmt_wow(v):
 
 
 def draw_panel(ax, ax2, title, weeks, values, objectif, fam_bold):
+    # ── FENÊTRE GLISSANTE ────────────────────────────────────────────────
+    # Le graphique n'affiche que les FENETRE dernières semaines : au-delà, les
+    # colonnes se resserrent et les libellés de période deviennent illisibles.
+    # ⚠️ Le % vs semaine précédente est calculé sur la série COMPLÈTE, PUIS
+    # découpé. Découper d'abord priverait la plus ancienne semaine affichée de
+    # son prédécesseur : elle perdrait sa barre alors que la donnée existe.
+    serie = np.array(values, dtype=float)
+    total = len(serie)
+    pct_complet = [None] + [
+        (serie[i] - serie[i - 1]) / serie[i - 1] * 100 if serie[i - 1] else None
+        for i in range(1, total)
+    ]
+    debut = max(0, total - FENETRE)
+    values = serie[debut:]
+    pct = pct_complet[debut:]
+    weeks = list(weeks)[debut:]
+
     n = len(values)
     x = np.arange(n)
-    values = np.array(values, dtype=float)
-    pct = [None] + [(values[i] - values[i - 1]) / values[i - 1] * 100 if values[i - 1] else None for i in range(1, n)]
 
     mags = [abs(p) for p in pct if p is not None]
     max_mag = max(10, *(mags or [10])) * 1.25
@@ -68,16 +87,27 @@ def draw_panel(ax, ax2, title, weeks, values, objectif, fam_bold):
     q = vmax * 1.25
     ax2.set_ylim(-q, q)
 
-    # barres de variation (vert hausse / rouge baisse), à partir de S2
-    for i in range(1, n):
+    # barres de variation (vert hausse / rouge baisse) — depuis la 1re semaine
+    # affichée, son % venant de la semaine juste avant la fenêtre
+    for i in range(n):
         p = pct[i]
         if p is None:
             continue
         color = GREEN if p >= 0 else REDX
         ax.bar(x[i], p, width=0.5, color=color, zorder=3)
-        ax.text(x[i], p + (max_mag * 0.11 if p >= 0 else -max_mag * 0.13), f"{p:+.1f} %",
-                ha="center", va="bottom" if p >= 0 else "top", fontsize=9, fontweight="bold", color=color, fontfamily=fam_bold,
-                bbox=dict(facecolor="white", edgecolor="none", alpha=0.85, pad=1.5), zorder=10)
+        # Le % va DANS la barre quand elle est assez haute, dehors sinon. Deux
+        # familles d'étiquettes (% des barres, montants de la courbe) se
+        # disputaient la même bande au-dessus du zéro et se recouvraient — les
+        # rentrer dans la barre les sépare pour de bon, sans cadre blanc.
+        if abs(p) >= max_mag * 0.20:
+            ax.text(x[i], p - (max_mag * 0.045 if p >= 0 else -max_mag * 0.045), f"{p:+.1f} %",
+                    ha="center", va="top" if p >= 0 else "bottom", fontsize=9,
+                    fontweight="bold", color="white", fontfamily=fam_bold, zorder=10)
+        else:
+            ax.text(x[i], p + (max_mag * 0.06 if p >= 0 else -max_mag * 0.06), f"{p:+.1f} %",
+                    ha="center", va="bottom" if p >= 0 else "top", fontsize=9,
+                    fontweight="bold", color=color, fontfamily=fam_bold,
+                    bbox=dict(facecolor="white", edgecolor="none", alpha=0.85, pad=1.5), zorder=10)
 
     # courbe lissée du total réalisé (axe absolu)
     if n >= 3:
@@ -89,10 +119,11 @@ def draw_panel(ax, ax2, title, weeks, values, objectif, fam_bold):
         ax2.plot(x, values, color=YELDK, lw=2.5, zorder=4)
     ax2.scatter(x, values, color=YELDK, edgecolor="white", s=45, zorder=8, linewidths=1.2)
     for i, v in enumerate(values):
-        # alterner au-dessus/en dessous du point pour limiter les collisions avec les labels de %
-        up = (i % 2 == 0)
-        offset = q * 0.16 * (1 if up else -1)
-        ax2.text(x[i], v + offset, fmt_wow(v), ha="center", va="bottom" if up else "top", fontsize=8.5, fontweight="bold", color=INK, fontfamily=fam_bold,
+        # Toujours AU-DESSUS du point. L'alternance haut/bas servait à écarter les
+        # étiquettes quand 8 colonnes se serraient ; à 5 la place horizontale suffit,
+        # et alterner renvoyait une étiquette sur deux dans la zone des barres.
+        offset = q * 0.13
+        ax2.text(x[i], v + offset, fmt_wow(v), ha="center", va="bottom", fontsize=8.5, fontweight="bold", color=INK, fontfamily=fam_bold,
                  bbox=dict(facecolor="white", edgecolor="none", alpha=0.85, pad=1.5), zorder=9)
 
     # ligne d'objectif (axe absolu), clampée si hors échelle
@@ -105,7 +136,9 @@ def draw_panel(ax, ax2, title, weeks, values, objectif, fam_bold):
                  bbox=dict(facecolor="white", edgecolor="none", alpha=0.9, pad=1.5), zorder=7)
 
     ax.set_xlim(-0.6, n - 1 + 0.9)
-    ax.set_xticks(x); ax.set_xticklabels(weeks, fontsize=9.5, color=MUTE)
+    # Libellés horizontaux : à 5 colonnes, « 31 juil – 6 août » tient sans rotation,
+    # et un texte droit se lit plus vite qu'un texte incliné.
+    ax.set_xticks(x); ax.set_xticklabels(weeks, fontsize=9, color=INK, fontfamily=fam_bold)
     ax.set_title(title, fontsize=13, fontweight="bold", color=INK, fontfamily=fam_bold, loc="left", pad=10)
     for spine in ("top", "right", "left"): ax.spines[spine].set_visible(False)
     for spine in ("top", "left", "right"): ax2.spines[spine].set_visible(False)
@@ -122,7 +155,10 @@ def main():
 
     data = json.loads(report_path.read_text(encoding="utf-8"))
     wow = data.get("wow") or {}
-    weeks = wow.get("weeks") or []
+    # `periodes` (« 3 – 9 août ») remplace `weeks` (« S8 ») quand le producteur la
+    # fournit. Le repli sur `weeks` garde le graphique fonctionnel avec un
+    # report.json produit avant ce changement.
+    weeks = wow.get("periodes") or wow.get("weeks") or []
     if len(weeks) < 2:
         print("⚠️ Pas assez de semaines pour un graphique WoW (< 2) — aucun PNG généré.")
         return

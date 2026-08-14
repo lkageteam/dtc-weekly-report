@@ -154,7 +154,7 @@ function buildReportData_(semaineArg) {
 
   // WEEK ON WEEK : réalisé par semaine 1..N (POS depuis classement, BA depuis form, fenêtres lun→dim)
   var N = parseInt(String(semaine).replace(/\D/g, ''), 10) || 1;
-  var wow = { weeks: [], pos: [], ba: [], posObjectif: objectifTSA, baObjectif: RPT_BA_DAILY_GLOBAL * RPT_BA_WORK_DAYS };
+  var wow = { weeks: [], periodes: [], pos: [], ba: [], posObjectif: objectifTSA, baObjectif: RPT_BA_DAILY_GLOBAL * RPT_BA_WORK_DAYS };
   // Diagnostic BA : volume (nb transactions), valeur (montant) et #personnes actives (numéros distincts) par semaine
   var baDiag = { weeks: [], nbTx: [], montant: [], actifs: [] };
   for (var k = 1; k <= N; k++) {
@@ -163,6 +163,9 @@ function buildReportData_(semaineArg) {
     classement.forEach(function (r) { if (String(r.SEMAINE).trim() === wk) vp += _rptNum_(r.VOLUME_XAF); });
     wow.pos.push(vp);
     var ws = new Date(RPT_BA_START.getTime() + (k - 1) * 7 * 86400000), we = new Date(ws.getTime() + 7 * 86400000 - 1), vb = 0, nbTx = 0;
+    // Libellé de PÉRIODE affiché sur l'axe du graphique WoW à la place de « S8 ».
+    // `we` porte 23:59:59.999 du dimanche : getDate() rend bien le jour de clôture.
+    wow.periodes.push(_rptLibellePeriode_(ws, we));
     var actifsSet = {};
     formRows.forEach(function (r) {
       var reg = String(r[kReg] || '').trim().toUpperCase(); if (!RPT_EFFECTIF[reg]) return;
@@ -249,6 +252,21 @@ function _rptCycle_(semaine) {
   function dmy(d) { return ('0' + d.getDate()).slice(-2) + '/' + ('0' + (d.getMonth() + 1)).slice(-2) + '/' + d.getFullYear(); }
   return { label: 'Semaine ' + N + ' · ' + human(bs) + ' au ' + human(be), reportDate: dmy(new Date(be.getTime() + MS)), baStart: bs, baEnd: be, pos: human(ps) + ' au ' + human(pe) };
 }
+// Mois abrégés — ce libellé sert d'étiquette d'axe et doit tenir sur UNE ligne
+// horizontale dans une colonne de graphique. Doit rester identique à `MOIS_AB` de
+// `scripts/progress_report_dtc_assisted.js` et de `pipelines/dtc_weekly/dtc_weekly.py`
+// (lka-unified) : les trois producteurs alimentent le MÊME graphique.
+var RPT_MOIS_AB = ['janv', 'févr', 'mars', 'avr', 'mai', 'juin', 'juil', 'août', 'sept', 'oct', 'nov', 'déc'];
+
+// « 3 – 9 août », ou « 31 juil – 6 août » quand la semaine chevauche deux mois.
+// Le mois n'est répété que s'il change : l'écrire deux fois alourdit sans rien apprendre.
+function _rptLibellePeriode_(debut, fin) {
+  var m1 = RPT_MOIS_AB[debut.getMonth()], m2 = RPT_MOIS_AB[fin.getMonth()];
+  return m1 === m2
+    ? debut.getDate() + ' – ' + fin.getDate() + ' ' + m1
+    : debut.getDate() + ' ' + m1 + ' – ' + fin.getDate() + ' ' + m2;
+}
+
 function _rptSheetByName_(ss, name) { var s = ss.getSheetByName(name); if (!s) throw new Error('Onglet "' + name + '" introuvable'); return s; }
 function _rptSheetByGid_(ss, gid) { var sh = ss.getSheets(); for (var i = 0; i < sh.length; i++) if (sh[i].getSheetId() === gid) return sh[i]; throw new Error('Onglet gid ' + gid + ' introuvable'); }
 function _rptRows_(sheet) {

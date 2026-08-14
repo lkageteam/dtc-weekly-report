@@ -42,6 +42,20 @@ const DEFAULT_WEEK = "Semaine 1";
 const PROGRAMME_START = new Date(2026, 5, 12); // 12 juin 2026 — ancre des semaines POS (ven→jeu)
 const BA_START = new Date(2026, 5, 15);        // 15 juin 2026 — ancre des semaines BA (lun→dim)
 
+// Mois abrégés — le libellé d'axe doit tenir sur UNE ligne horizontale dans une colonne
+// de graphique. « août » et « mars » ne s'abrègent pas, les autres oui.
+const MOIS_AB = ["janv", "févr", "mars", "avr", "mai", "juin", "juil", "août", "sept", "oct", "nov", "déc"];
+
+// « 3 – 9 août » quand la semaine tient dans un mois, « 31 juil – 6 août » quand elle
+// chevauche. Le mois n'est répété que s'il change : répéter « août » des deux côtés
+// alourdit sans rien apprendre.
+function libellePeriode(debut, fin) {
+  const m1 = MOIS_AB[debut.getMonth()], m2 = MOIS_AB[fin.getMonth()];
+  return m1 === m2
+    ? `${debut.getDate()} – ${fin.getDate()} ${m1}`
+    : `${debut.getDate()} ${m1} – ${fin.getDate()} ${m2}`;
+}
+
 // Dernière "SEMAINE" présente dans le classement (source canonique = chaîne MySQL→Sheets).
 function latestWeekFromClassement() {
   try {
@@ -255,13 +269,17 @@ function computeFromCSV() {
 
   // ── WEEK ON WEEK : réalisé par semaine 1..N (POS depuis classement, BA depuis form) ──
   const N = weekNum(CWEEK) || 1;
-  const wow = { weeks: [], pos: [], ba: [], posObjectif: objectifTSA, baObjectif: CONFIG.baDailyGlobal * CONFIG.baWorkDays };
+  const wow = { weeks: [], periodes: [], pos: [], ba: [], posObjectif: objectifTSA, baObjectif: CONFIG.baDailyGlobal * CONFIG.baWorkDays };
   // Diagnostic BA : volume (nb transactions), valeur (montant) et #personnes actives (numero_ba distincts) par semaine
   const baDiag = { weeks: [], nbTx: [], montant: [], actifs: [] };
   for (let k = 1; k <= N; k++) {
     wow.weeks.push("S" + k);
     wow.pos.push(classement.filter(r => r.SEMAINE === "Semaine " + k).reduce((s, r) => s + num(r.VOLUME_XAF), 0));
     const ws = new Date(BA_START.getTime() + (k - 1) * 7 * 86400000), we = new Date(ws.getTime() + 7 * 86400000 - 1);
+    // Libellé de PÉRIODE (fenêtre BA lun→dim), affiché sur l'axe du graphique WoW à la
+    // place de « S8 » : une date se lit sans avoir à connaître l'ancre du programme.
+    // Le numéro de semaine n'est pas perdu — il reste dans le sous-titre de la planche.
+    wow.periodes.push(libellePeriode(ws, we));
     let m = 0, nbTx = 0; const actifsSet = new Set();
     form.forEach(r => {
       if (!REGIONS.includes((r[cReg] || "").trim().toUpperCase())) return;
@@ -298,7 +316,7 @@ function applyJson(j) {
     primeTSA, champion: primeTSA[0] || {}, objectifTSA: j.objectifTSA,
     baAgg, baDailyByReg, baWorkDays: (j.ba && j.ba.workDays) || 6,
     daySeries: (j.ba && j.ba.days) || [], dailyTarget: (j.ba && j.ba.dailyObjectif) || 0,
-    wow: j.wow || { weeks: [], pos: [], ba: [], posObjectif: j.objectifTSA || 0, baObjectif: 0 },
+    wow: j.wow || { weeks: [], periodes: [], pos: [], ba: [], posObjectif: j.objectifTSA || 0, baObjectif: 0 },
     retours: j.retours || { total: 0, items: [] },
     baDiag: j.baDiag || { weeks: [], nbTx: [], montant: [], actifs: [] },
   };
