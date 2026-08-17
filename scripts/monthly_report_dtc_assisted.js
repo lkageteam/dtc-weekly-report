@@ -422,13 +422,12 @@ const tauxColor = p => p >= 90 ? GREEN : p >= 50 ? AMBER : REDX;
   const by = py + 0.4;
   weekSeries.forEach((d, i) => {
     const y = by + i * rowH2;
-    const pr = Math.round(d.pct);
-    const c = pr >= 90 ? GREEN : pr >= 50 ? AMBER : REDX;
+    const c = d.pct >= 90 ? GREEN : d.pct >= 50 ? AMBER : REDX;
     s.addText(d.label, { x: rx, y, w: lblW, h: rowH2 - 0.05, margin: 0, fontFace: fBody, fontSize: 9, color: MUTE, valign: "middle" });
     s.addShape(pres.shapes.RECTANGLE, { x: trackX, y: y + rowH2 * 0.15, w: trackW, h: rowH2 * 0.7, fill: { color: ROW }, line: { type: "none" } });
     const fillW = Math.max(0.02, Math.min(1, d.pct / scaleMax) * trackW);
     s.addShape(pres.shapes.RECTANGLE, { x: trackX, y: y + rowH2 * 0.15, w: fillW, h: rowH2 * 0.7, fill: { color: c }, line: { type: "none" } });
-    s.addText(pr + "%", { x: rx + rw - valW, y, w: valW, h: rowH2 - 0.05, margin: 0, fontFace: fHead, bold: true, fontSize: 9.5, color: c, align: "right", valign: "middle" });
+    s.addText(d.pct.toFixed(1) + "%", { x: rx + rw - valW, y, w: valW, h: rowH2 - 0.05, margin: 0, fontFace: fHead, bold: true, fontSize: 9.5, color: c, align: "right", valign: "middle" });
   });
   const objX = trackX + (100 / scaleMax) * trackW;
   const barsBottom = by + weekSeries.length * rowH2;
@@ -450,7 +449,9 @@ const tauxColor = p => p >= 90 ? GREEN : p >= 50 ? AMBER : REDX;
   chrome(pres, s, 6, "Tendances · Évolution mois/mois");
   header(pres, s, "Month-over-month — POS & BA", `Réalisé vs objectif du mois · jusqu'à ${MONTH_LABEL}`);
 
-  const M = n => (n / 1e6).toFixed(n >= 1e7 ? 0 : 1).replace(".", ",") + " M";
+  // « 16,55 M » — abrégé pour la lisibilité, mais toujours 2 décimales : avec
+  // 0 décimale au-dessus de 10 M, 17,5 M s'affichait « 18 M » (un demi-million effacé).
+  const M = n => (n / 1e6).toFixed(2).replace(".", ",") + " M";
   const panels = [
     { title: "POS — Volume réalisé", real: m => m.volTotal, obj: m => m.posObjectif, unit: m => `${m.win.posDays} j` },
     { title: "BA — Montant réalisé", real: m => m.baMont, obj: m => m.baObjectif, unit: m => `${m.win.workDays} j ouvrés` },
@@ -506,7 +507,7 @@ const tauxColor = p => p >= 90 ? GREEN : p >= 50 ? AMBER : REDX;
       // valeur : au bout de la barre, ou dedans (blanc) s'il ne reste plus la place
       const lbl = `${M(real)}  ·  ${pct.toFixed(1)} %`;
       const room = plotW - bw;
-      if (room >= 1.35) s.addText(lbl, { x: plotX + bw + 0.08, y: barY, w: room - 0.08, h: barH, margin: 0, fontFace: fHead, bold: true, fontSize: 10, color: INK, valign: "middle" });
+      if (room >= 1.45) s.addText(lbl, { x: plotX + bw + 0.08, y: barY, w: room - 0.08, h: barH, margin: 0, fontFace: fHead, bold: true, fontSize: 10, color: INK, valign: "middle" });
       else s.addText(lbl, { x: plotX + 0.1, y: barY, w: bw - 0.2, h: barH, margin: 0, fontFace: fHead, bold: true, fontSize: 10, color: "FFFFFF", align: "right", valign: "middle" });
 
       // variation m/m en points de taux (seul comparable : les mois n'ont pas la même durée)

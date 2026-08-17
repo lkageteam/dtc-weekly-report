@@ -565,8 +565,7 @@ const slideBA = () => {
   const rowH = 0.305, by = py + 0.4;
   daySeries.forEach((d, i) => {
     const y = by + i * rowH;
-    const pr = Math.round(d.pct);
-    const c = pr >= 90 ? GREEN : pr >= 50 ? AMBER : REDX;
+    const c = d.pct >= 90 ? GREEN : d.pct >= 50 ? AMBER : REDX;
     s.addText(d.label, { x: rx, y, w: lblW, h: rowH - 0.05, margin: 0, fontFace: fBody, fontSize: 8.5, color: MUTE, valign: "middle" });
     // piste
     s.addShape(pres.shapes.RECTANGLE, { x: trackX, y: y + 0.045, w: trackW, h: rowH - 0.14, fill: { color: ROW }, line: { type: "none" } });
@@ -574,7 +573,7 @@ const slideBA = () => {
     const fillW = Math.max(0.02, Math.min(1, d.pct / scaleMax) * trackW);
     s.addShape(pres.shapes.RECTANGLE, { x: trackX, y: y + 0.045, w: fillW, h: rowH - 0.14, fill: { color: c }, line: { type: "none" } });
     // valeur %
-    s.addText(pr + "%", { x: rx + rw - valW, y, w: valW, h: rowH - 0.05, margin: 0, fontFace: fHead, bold: true, fontSize: 8.5, color: c, align: "right", valign: "middle" });
+    s.addText(d.pct.toFixed(1) + "%", { x: rx + rw - valW, y, w: valW, h: rowH - 0.05, margin: 0, fontFace: fHead, bold: true, fontSize: 8.5, color: c, align: "right", valign: "middle" });
   });
   // repère objectif (ligne verticale à 100 %)
   const objX = trackX + (100 / scaleMax) * trackW;

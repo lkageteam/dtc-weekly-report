@@ -76,12 +76,17 @@ def register_fonts():
 
 
 def fmt_wow(v):
+    """« 16,55 M » — abrégé pour rester lisible, mais TOUJOURS 2 décimales.
+
+    L'ancienne version basculait sur 0 décimale au-dessus de 10 M : 17,5 M
+    s'affichait « 18 M », soit un demi-million effacé par l'arrondi.
+    """
     av = abs(v)
     if av >= 1e6:
-        return f"{v / 1e6:.{0 if av >= 1e7 else 1}f} M".replace(".", ",")
+        return f"{v / 1e6:.2f} M".replace(".", ",")
     if av >= 1e3:
-        return f"{round(v / 1e3)} k"
-    return str(round(v))
+        return f"{v / 1e3:.2f} k".replace(".", ",")
+    return f"{v:.2f}".replace(".", ",")
 
 
 def draw_panel(ax, ax2, title, weeks, values, objectif, fam_bold):
@@ -118,6 +123,17 @@ def draw_panel(ax, ax2, title, weeks, values, objectif, fam_bold):
 
     # barres de variation (vert hausse / rouge baisse) — depuis la 1re semaine
     # affichée, son % venant de la semaine juste avant la fenêtre
+    #
+    # ⚠️ Les étiquettes de % sont écrites sur ax2 (l'axe absolu), pas sur ax :
+    # matplotlib dessine TOUT un axe jumelé au-dessus de l'axe principal, quel que
+    # soit le zorder — la courbe jaune barrait donc les « +4,0 % ». Les deux échelles
+    # étant centrées sur 0, la conversion est une simple règle de trois.
+    def y2(p):
+        return p / max_mag * q
+
+    # position (en coordonnées de l'axe absolu) de chaque étiquette de %, pour que
+    # les étiquettes de montant sachent les éviter plus bas
+    y_pct_label = [None] * n
     for i in range(n):
         p = pct[i]
         if p is None:
@@ -129,14 +145,16 @@ def draw_panel(ax, ax2, title, weeks, values, objectif, fam_bold):
         # disputaient la même bande au-dessus du zéro et se recouvraient — les
         # rentrer dans la barre les sépare pour de bon, sans cadre blanc.
         if abs(p) >= max_mag * 0.20:
-            ax.text(x[i], p - (max_mag * 0.045 if p >= 0 else -max_mag * 0.045), f"{p:+.1f} %",
-                    ha="center", va="top" if p >= 0 else "bottom", fontsize=9,
-                    fontweight="bold", color="white", fontfamily=fam_bold, zorder=10)
+            y_pct_label[i] = y2(p)
+            ax2.text(x[i], y2(p - (max_mag * 0.045 if p >= 0 else -max_mag * 0.045)), f"{p:+.1f} %",
+                     ha="center", va="top" if p >= 0 else "bottom", fontsize=9,
+                     fontweight="bold", color="white", fontfamily=fam_bold, zorder=10)
         else:
-            ax.text(x[i], p + (max_mag * 0.06 if p >= 0 else -max_mag * 0.06), f"{p:+.1f} %",
-                    ha="center", va="bottom" if p >= 0 else "top", fontsize=9,
-                    fontweight="bold", color=color, fontfamily=fam_bold,
-                    bbox=dict(facecolor="white", edgecolor="none", alpha=0.85, pad=1.5), zorder=10)
+            y_pct_label[i] = y2(p + (max_mag * 0.06 if p >= 0 else -max_mag * 0.06))
+            ax2.text(x[i], y_pct_label[i], f"{p:+.1f} %",
+                     ha="center", va="bottom" if p >= 0 else "top", fontsize=9,
+                     fontweight="bold", color=color, fontfamily=fam_bold,
+                     bbox=dict(facecolor="white", edgecolor="none", alpha=0.85, pad=1.5), zorder=10)
 
     # courbe lissée du total réalisé (axe absolu)
     if n >= 3:
@@ -152,6 +170,11 @@ def draw_panel(ax, ax2, title, weeks, values, objectif, fam_bold):
         # étiquettes quand 8 colonnes se serraient ; à 5 la place horizontale suffit,
         # et alterner renvoyait une étiquette sur deux dans la zone des barres.
         offset = q * 0.13
+        # … sauf si le sommet de la barre arrive juste là : le % et le montant se
+        # superposaient (cas d'une forte hausse, où la barre monte au niveau du point).
+        yl = y_pct_label[i]
+        if yl is not None and abs(v + offset - yl) < q * 0.12:
+            offset = q * 0.26
         ax2.text(x[i], v + offset, fmt_wow(v), ha="center", va="bottom", fontsize=8.5, fontweight="bold", color=INK, fontfamily=fam_bold,
                  bbox=dict(facecolor="white", edgecolor="none", alpha=0.85, pad=1.5), zorder=9)
 
