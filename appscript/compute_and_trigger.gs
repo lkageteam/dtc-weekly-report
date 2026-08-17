@@ -1,4 +1,26 @@
 /**
+ * ⚠️ ANCIEN PRODUCTEUR — DOUBLON ASSUMÉ ET BORNÉ DEPUIS LE 2026-08-17.
+ *
+ * Le tronc (`lka-unified/pipelines/dtc_weekly`) calcule désormais le même
+ * rapport depuis MySQL en direct et dispatche le même `weekly-report`. Les deux
+ * producteurs restent en place volontairement : retirer celui-ci d'abord
+ * créerait un vrai trou si le filet du tronc ne réveillait rien (leçon des
+ * chaînes Bar_Erevan et David_Intake_Watch, où le doublon a servi).
+ *
+ * Ce que le doublon ne peut PAS faire : envoyer deux mails. Les deux
+ * dédoublonnages sont aveugles l'un à l'autre (ici LAST_SENT_WEEK dans les
+ * Script Properties, là-bas `lka_client_mtn.dtc_weekly_envois` en MySQL), donc
+ * la clé d'idempotence PAR PÉRIODE vit au point de livraison —
+ * `scripts/etat_envois.js`, lu par `.github/workflows/weekly-report.yml`.
+ *
+ * ➡️ CONDITION DE RETRAIT, à ne pas remettre à plus tard : observer UN cycle
+ *    réel du lundi dont `state/envois_hebdo.json` porte
+ *    `"producteur": "lka-unified/dtc_weekly"`, puis supprimer ce fichier ET
+ *    ses triggers (`installWeeklyTriggers`) dans le même geste. Supprimer le
+ *    fichier ne suffit pas : les triggers vivent dans le projet Apps Script.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *
  * Calcule le rapport hebdomadaire DTC et déclenche son RENDU (.pptx) sur GitHub Actions.
  * À ajouter au projet Apps Script de la chaîne (D:\LKA\DTC Pushed), lié au classeur
  * contenant les onglets CLASSEMENT_TSA et TSA_REF.
@@ -46,7 +68,12 @@ function buildAndTriggerReport(semaineArg) {
   var res = UrlFetchApp.fetch('https://api.github.com/repos/' + GH_REPO + '/dispatches', {
     method: 'post', contentType: 'application/json',
     headers: { Authorization: 'token ' + token, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' },
-    payload: JSON.stringify({ event_type: 'weekly-report', client_payload: { report: report } }),
+    // `producteur` : inscrit tel quel dans state/envois_hebdo.json côté rendu.
+    // C'est la trace qui permettra de constater qu'un cycle réel est bien parti
+    // du tronc — condition de retrait de ce fichier (voir l'en-tête).
+    // (dans `client_payload` seulement : l'endpoint /dispatches n'accepte que
+    //  `event_type` et `client_payload` au premier niveau et rend 422 sinon)
+    payload: JSON.stringify({ event_type: 'weekly-report', client_payload: { report: report, producteur: 'apps_script/compute_and_trigger.gs' } }),
     muteHttpExceptions: true,
   });
   if (res.getResponseCode() >= 300) throw new Error('dispatch ' + res.getResponseCode() + ' ' + res.getContentText());

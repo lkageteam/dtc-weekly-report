@@ -12,6 +12,21 @@ on:
   # Lancement manuel (re-rendu) — nécessite des données déjà calculées dans le payload
   workflow_dispatch:
 
+# DEUX PRODUCTEURS DISPATCHENT ICI, ET ILS NE SE VOIENT PAS (2026-08-17) :
+# `appscript/compute_and_trigger.gs` (dédoublonné par LAST_SENT_WEEK) et
+# `lka-unified/pipelines/dtc_weekly` (dédoublonné en MySQL). Le garde-fou qui
+# les rend compatibles est la clé d'idempotence PAR PÉRIODE de
+# `scripts/etat_envois.js`, posée ici — au point de livraison, seul endroit par
+# où les deux passent. Le groupe de concurrence sérialise les deux dispatches
+# pour que le second lise bien l'état écrit par le premier ; sans lui, les deux
+# runs liraient un état vide en parallèle et la clé ne protégerait de rien.
+concurrency:
+  group: weekly-report-envoi
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # inscrire l'envoi dans state/envois_hebdo.json
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -58,6 +73,21 @@ jobs:
         run: |
           echo "file=$(ls outputs/*.pptx | head -1)" >> "$GITHUB_OUTPUT"
           echo "week=$(node -e 'process.stdout.write(require("./inputs/report.json").label||"")')" >> "$GITHUB_OUTPUT"
+          # La PÉRIODE (« Semaine 4 ») sert de clé d'idempotence — pas `label`,
+          # qui porte les dates humaines et changerait de forme sans changer de période.
+          echo "periode=$(node -e 'process.stdout.write(require("./inputs/report.json").semaine||"")')" >> "$GITHUB_OUTPUT"
+
+      # Le rapport a-t-il DÉJÀ été envoyé pour cette période, quel que soit le
+      # producteur qui a dispatché ? `check` sort 1 si oui — d'où `|| echo`,
+      # sinon l'étape ferait échouer le job sur un cas parfaitement normal.
+      - name: Contrôler l'idempotence de la période
+        id: idem
+        run: |
+          if node scripts/etat_envois.js check "${{ steps.f.outputs.periode }}"; then
+            echo "envoyer=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "envoyer=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Archiver le .pptx (téléchargeable depuis le run)
         uses: actions/upload-artifact@v4
@@ -69,10 +99,44 @@ jobs:
       # Envoi par mail via l'API Gmail (OAuth) — actif si le secret existe ET si l'événement
       # déclencheur est bien "weekly-report" (production), pas "weekly-report-preview" (vérification manuelle).
       - name: Envoyer par mail à g.fondzefe@lkaservices.com
-        if: ${{ env.GMAIL_TOKEN_JSON != '' && github.event.action == 'weekly-report' }}
+        id: mail
+        if: ${{ env.GMAIL_TOKEN_JSON != '' && github.event.action == 'weekly-report' && steps.idem.outputs.envoyer == 'true' }}
         env:
           GMAIL_TOKEN_JSON: ${{ secrets.GMAIL_TOKEN_JSON }}
           MAIL_FILE: ${{ steps.f.outputs.file }}
           MAIL_WEEK: ${{ steps.f.outputs.week }}
           MAIL_TO: g.fondzefe@lkaservices.com
         run: node scripts/send_mail.js
+
+      # ENVOYER D'ABORD, MARQUER ENSUITE — même ordre que le tronc
+      # (`verifier_et_lancer.py`) et pour la même raison : si le mail échoue,
+      # rien n'est inscrit et le prochain dispatch retente. L'inverse bloquerait
+      # tout renvoi après un envoi raté.
+      - name: Inscrire l'envoi (clé d'idempotence par période)
+        if: ${{ steps.mail.outcome == 'success' }}
+        env:
+          DTC_PRODUCTEUR: ${{ github.event.client_payload.producteur || 'inconnu' }}
+        run: |
+          node scripts/etat_envois.js mark "${{ steps.f.outputs.periode }}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/envois_hebdo.json
+          git commit -m "chore(envois): ${{ steps.f.outputs.periode }} envoyee (producteur: ${DTC_PRODUCTEUR})"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      # Un run vert qui n'a rien envoyé doit le DIRE. C'est le défaut qui a fait
+      # sauter un envoi en silence (cf. l'en-tête `on:` de ce fichier).
+      - name: Résumé
+        if: always()
+        run: |
+          {
+            echo "### Rapport DTC — ${{ steps.f.outputs.periode }}"
+            echo ""
+            echo "- événement : \`${{ github.event.action || github.event_name }}\`"
+            echo "- producteur : \`${{ github.event.client_payload.producteur || 'inconnu' }}\`"
+            echo "- mail : \`${{ steps.mail.outcome || 'non tenté' }}\`"
+            if [ "${{ steps.idem.outputs.envoyer }}" != "true" ]; then
+              echo "- ⚠️ **période déjà envoyée** — second mail volontairement supprimé (state/envois_hebdo.json)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
