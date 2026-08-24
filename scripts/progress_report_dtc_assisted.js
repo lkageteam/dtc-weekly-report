@@ -235,6 +235,31 @@ function computeFromCSV() {
     return rows.find(r => num(r.RANG_REGIONAL) === 1) || rows.sort((a, b) => num(b.VOLUME_XAF) - num(a.VOLUME_XAF))[0];
   }).filter(Boolean).sort((a, b) => num(b.VOLUME_XAF) - num(a.VOLUME_XAF));
 
+  // ── NOUVEAU CHALLENGE (2026-08-24) : n°1 régional par CROISSANCE, pas volume ──
+  // Semaine N vs semaine N-1, matché par TSA_CORPORATE (clé stable). Un TSA sans
+  // ligne (ou à volume nul) la semaine précédente n'a pas de croissance
+  // calculable — exclu, pas mis à zéro. Porté tel quel de `build_croissance`
+  // (dtc_weekly.py, lka-unified) pour que les deux calculs restent comparables.
+  const cwPrec = classement.filter(r => r.SEMAINE === "Semaine " + (weekNum(CWEEK) - 1));
+  const precParCorp = {};
+  cwPrec.forEach(r => { precParCorp[String(r.TSA_CORPORATE || "").trim()] = r; });
+  const candidatsCroissance = [];
+  cw.forEach(r => {
+    const rPrec = precParCorp[String(r.TSA_CORPORATE || "").trim()];
+    if (!rPrec) return;
+    const volPrec = num(rPrec.VOLUME_XAF);
+    if (volPrec <= 0) return;
+    const vol = num(r.VOLUME_XAF);
+    candidatsCroissance.push({
+      REGION: r.REGION, TSA: r.TSA, RBM: r.RBM, VOLUME_XAF: vol,
+      VOLUME_PRECEDENT: volPrec, CROISSANCE_PCT: +((vol - volPrec) / volPrec * 100).toFixed(2),
+    });
+  });
+  const croissanceTSA = REGIONS.map(reg => {
+    const rows = candidatsCroissance.filter(c => c.REGION === reg);
+    return rows.sort((a, b) => b.CROISSANCE_PCT - a.CROISSANCE_PCT)[0];
+  }).filter(Boolean).sort((a, b) => b.CROISSANCE_PCT - a.CROISSANCE_PCT);
+
   // TSA_REF → cibles POS (12M/jour) ; UNIQUE POS reste figé
   const tsaRef = readCSV(path.join(IN, "tsa_ref.csv"));
   const posDaily = {}; REGIONS.forEach(r => posDaily[r] = 0);
@@ -295,7 +320,7 @@ function computeFromCSV() {
   // RETOURS TERRAIN : répartition cumulée des problèmes signalés (toutes semaines)
   const retours = aggregateRetours(form, cProb);
 
-  return { CWEEK, volByReg, volTotal, primeTSA, champion: primeTSA[0] || {}, objectifTSA, baAgg, baDailyByReg, baWorkDays: CONFIG.baWorkDays, daySeries, dailyTarget, wow, retours, baDiag };
+  return { CWEEK, volByReg, volTotal, primeTSA, croissanceTSA, champion: primeTSA[0] || {}, objectifTSA, baAgg, baDailyByReg, baWorkDays: CONFIG.baWorkDays, daySeries, dailyTarget, wow, retours, baDiag };
 }
 
 // JSON-contrat (envoyé par l'Apps Script) → mêmes variables internes que computeFromCSV
@@ -312,9 +337,10 @@ function applyJson(j) {
     CONFIG.effectif[r] = b.effectif || 0; baAgg[r] = { act: b.activations || 0, mont: b.montant || 0 }; baDailyByReg[r] = b.dailyTarget || 0;
   });
   const primeTSA = (j.prime || []).map(p => ({ REGION: p.region, TSA: p.tsa, RBM: p.rbm, VOLUME_XAF: p.volume, NB_POS_ACTIFS: p.posActifs, TAUX_ACTIVATION: p.tauxAct }));
+  const croissanceTSA = (j.croissance || []).map(c => ({ REGION: c.region, TSA: c.tsa, RBM: c.rbm, VOLUME_XAF: c.volume, VOLUME_PRECEDENT: c.volumePrecedent, CROISSANCE_PCT: c.croissancePct }));
   return {
     CWEEK: j.semaine, volByReg, volTotal: Object.values(volByReg).reduce((a, b) => a + b, 0),
-    primeTSA, champion: primeTSA[0] || {}, objectifTSA: j.objectifTSA,
+    primeTSA, croissanceTSA, champion: primeTSA[0] || {}, objectifTSA: j.objectifTSA,
     baAgg, baDailyByReg, baWorkDays: (j.ba && j.ba.workDays) || 6,
     daySeries: (j.ba && j.ba.days) || [], dailyTarget: (j.ba && j.ba.dailyObjectif) || 0,
     wow: j.wow || { weeks: [], periodes: [], pos: [], ba: [], posObjectif: j.objectifTSA || 0, baObjectif: 0 },
@@ -334,6 +360,7 @@ function buildReportJson(D) {
     semaine: D.CWEEK, label: WEEKLY.weekLabel, weekNo: WEEKLY.weekNo, reportDate: WEEKLY.reportDate, posPeriod: WEEKLY.posPeriod,
     recrutement: WEEKLY.recrutement, primeThreshold: CONFIG.primeThreshold, objectifTSA: D.objectifTSA, pos,
     prime: D.primeTSA.map(p => ({ region: p.REGION, tsa: p.TSA, rbm: p.RBM, volume: num(p.VOLUME_XAF), posActifs: num(p.NB_POS_ACTIFS), tauxAct: num(p.TAUX_ACTIVATION) })),
+    croissance: (D.croissanceTSA || []).map(c => ({ region: c.REGION, tsa: c.TSA, rbm: c.RBM, volume: num(c.VOLUME_XAF), volumePrecedent: num(c.VOLUME_PRECEDENT), croissancePct: c.CROISSANCE_PCT })),
     ba: { workDays: D.baWorkDays, dailyObjectif: D.dailyTarget, rows, days: D.daySeries.map(d => ({ label: d.label, mont: d.mont, pct: +d.pct.toFixed(1) })) },
     wow: D.wow,
     retours: D.retours,
@@ -353,7 +380,7 @@ if (DUMP) {
   console.log("📤 report.json écrit (JSON-contrat) → " + path.join(IN, "report.json"));
   process.exit(0);
 }
-const { CWEEK, volByReg, volTotal, primeTSA, champion, objectifTSA, baAgg, baDailyByReg, baWorkDays, daySeries, dailyTarget, wow, retours, baDiag } = D;
+const { CWEEK, volByReg, volTotal, primeTSA, croissanceTSA, champion, objectifTSA, baAgg, baDailyByReg, baWorkDays, daySeries, dailyTarget, wow, retours, baDiag } = D;
 console.log(`📅 Semaine rendue : ${CWEEK}`);
 
 // ════════════════════════════════════════════════════════════════════
@@ -366,7 +393,7 @@ pres.title = "Progress Report DTC Assisted — MTN Bénin";
 pres.author = "Contribution LKA";
 pres.company = "MTN Bénin";
 
-const TOTAL = 9;
+const TOTAL = 10;
 
 // ── HELPERS ─────────────────────────────────────────────────────────
 function light(slide) { slide.background = { color: BG }; }
@@ -516,11 +543,11 @@ const tauxColor = p => p >= 90 ? GREEN : p >= 50 ? AMBER : REDX;
 }
 
 // ════════════════════════════════════════════════════════════════════
-//  SLIDE 5 · ACTIVATIONS BA — PROGRAMME FORCE DE SOUTIEN AUX TSA
+//  SLIDE 6 · ACTIVATIONS BA — PROGRAMME FORCE DE SOUTIEN AUX TSA
 // ════════════════════════════════════════════════════════════════════
 const slideBA = () => {
   const s = pres.addSlide(); light(s);
-  chrome(s, 5, "Force de soutien · Activations BA");
+  chrome(s, 6, "Force de soutien · Activations BA");
   header(s, "Activations BA — Force de soutien aux TSA", `Programme BA en appui des TSA · ${WEEKLY.weekLabel}`);
 
   const rows = []; let tEff = 0, tAct = 0, tTar = 0, tMon = 0;
@@ -670,11 +697,74 @@ const slideBA = () => {
   });
 }
 
-// SLIDE 5 · ACTIVATIONS BA — rendue ici (après Prime & Rang)
+// ════════════════════════════════════════════════════════════════════
+//  SLIDE 5 · CROISSANCE — NOUVEAU CHALLENGE (2026-08-24)
+//  Ajoutée EN PLUS de Prime & Rang (slide précédente), pour comparaison —
+//  celle-ci ne change ni d'ordre ni de contenu. Le propriétaire : « le
+//  gagnant par région sera celui qui a le plus grand taux de croissance,
+//  quel qu'en soit le volume ». n°1 régional = plus forte progression du
+//  volume vs la semaine précédente (voir `build_croissance`, dtc_weekly.py).
+// ════════════════════════════════════════════════════════════════════
+{
+  const s = pres.addSlide(); light(s);
+  chrome(s, 5, "Nouveau challenge · Croissance du volume");
+  header(s, "Croissance", `n°1 de chaque région par progression du volume — vs semaine précédente · ${CWEEK}`);
+
+  const nbClasses = croissanceTSA.length;
+  const meilleure = croissanceTSA[0] || {};
+  const moyenne = nbClasses ? croissanceTSA.reduce((acc, c) => acc + num(c.CROISSANCE_PCT), 0) / nbClasses : 0;
+  const kpis = [
+    { l: "MEILLEURE CROISSANCE", v: (meilleure.CROISSANCE_PCT != null ? meilleure.CROISSANCE_PCT.toFixed(1) : "—") + " %", c: GREEN },
+    { l: "CROISSANCE MOYENNE (N°1 RÉGIONAUX)", v: moyenne.toFixed(1) + " %", c: INK },
+    { l: "RÉGIONS CLASSÉES", v: nbClasses + " / " + REGIONS.length, c: nbClasses === REGIONS.length ? GREEN : AMBER, small: true },
+    { l: "TSA DE LA SEMAINE (CROISSANCE)", v: meilleure.TSA ? toTitle(meilleure.TSA) : "—", c: GREEN, small: true },
+  ];
+  const ky5 = 1.55, kwid5 = (CW - 0.3 * 3) / 4, kh5 = 1.05;
+  kpis.forEach((k, i) => {
+    const x = MX + i * (kwid5 + 0.3);
+    s.addShape(pres.shapes.RECTANGLE, { x, y: ky5, w: kwid5, h: kh5, fill: { color: ROW }, line: { type: "none" } });
+    s.addShape(pres.shapes.RECTANGLE, { x, y: ky5, w: 0.08, h: kh5, fill: { color: YEL }, line: { type: "none" } });
+    s.addText(k.l, { x: x + 0.2, y: ky5 + 0.13, w: kwid5 - 0.36, h: 0.25, margin: 0, fontFace: fBody, fontSize: 8.5, color: MUTE, charSpacing: 1.5 });
+    s.addText(k.v, { x: x + 0.18, y: ky5 + 0.36, w: kwid5 - 0.32, h: 0.6, margin: 0, fontFace: fHead, bold: true, fontSize: k.small ? 14 : 26, color: k.c, valign: "middle" });
+  });
+
+  // bandeau règle (pas d'éligibilité de volume ici — juste la règle rappelée)
+  const bnY5 = 2.62;
+  s.addShape(pres.shapes.RECTANGLE, { x: MX, y: bnY5, w: CW, h: 0.4, fill: { color: YELSOFT }, line: { type: "none" } });
+  s.addShape(pres.shapes.RECTANGLE, { x: MX, y: bnY5, w: 0.08, h: 0.4, fill: { color: YELDK }, line: { type: "none" } });
+  s.addText([
+    { text: "Nouveau challenge : ", options: { fontFace: fHead, bold: true, color: INK } },
+    { text: "le gagnant de chaque région est celui qui a la PLUS FORTE CROISSANCE du volume vs la semaine précédente — ", options: { fontFace: fBody, color: INK2 } },
+    { text: "quel que soit le volume.", options: { fontFace: fHead, bold: true, color: INK } },
+  ], { x: MX + 0.22, y: bnY5, w: CW - 0.4, h: 0.4, margin: 0, valign: "middle", fontSize: 10.5 });
+
+  const rowsCroissance = croissanceTSA.map(r => {
+    const pct = num(r.CROISSANCE_PCT);
+    return [r.REGION, toTitle(r.TSA), r.RBM ? toTitle(r.RBM) : "—",
+      fmt(r.VOLUME_PRECEDENT), fmt(r.VOLUME_XAF),
+      { text: (pct >= 0 ? "+" : "") + pct.toFixed(1) + " %", color: pct >= 0 ? GREEN : REDX, bold: true }];
+  });
+  const ty5 = 3.18, tw5 = CW;
+  table(s, MX, ty5, tw5, ["RÉGION", "TSA (N°1 CROISSANCE)", "RBM", "VOL. PRÉCÉDENT (XAF)", "VOLUME (XAF)", "CROISSANCE"], rowsCroissance, {
+    colWidths: [tw5 * 0.13, tw5 * 0.24, tw5 * 0.22, tw5 * 0.16, tw5 * 0.15, tw5 * 0.10],
+    rowH: 0.42, fs: 10, hfs: 9,
+  });
+
+  // régions sans base de comparaison (aucun TSA présent la semaine précédente)
+  // — nommées, pas mises à zéro : voir docstring de `build_croissance`.
+  if (nbClasses < REGIONS.length) {
+    const manquantes = REGIONS.filter(reg => !croissanceTSA.some(c => c.REGION === reg));
+    s.addText(`${manquantes.join(", ")} : pas de base de comparaison cette semaine (aucun TSA présent la semaine précédente).`, {
+      x: MX, y: 6.55, w: CW, h: 0.35, margin: 0, fontFace: fBody, italic: true, fontSize: 9.5, color: MUTE,
+    });
+  }
+}
+
+// SLIDE 6 · ACTIVATIONS BA — rendue ici (après Croissance)
 slideBA();
 
 // ════════════════════════════════════════════════════════════════════
-//  SLIDE 6 · WEEK-OVER-WEEK (POS + BA sur une seule slide, graphique matplotlib)
+//  SLIDE 7 · WEEK-OVER-WEEK (POS + BA sur une seule slide, graphique matplotlib)
 // ════════════════════════════════════════════════════════════════════
 // Le graphique (barres de variance + courbe lissée + ligne d'objectif, axes % et
 // absolu toujours centrés sur le même zéro) est généré par scripts/gen_wow_chart.py
@@ -682,7 +772,7 @@ slideBA();
 // en dev), on affiche un message plutôt que de planter le rendu.
 {
   const s = pres.addSlide(); light(s);
-  chrome(s, 6, "Tendances · Évolution semaine/semaine");
+  chrome(s, 7, "Tendances · Évolution semaine/semaine");
   header(s, "Week-over-week — POS & BA", `Volume/Montant réalisés par semaine vs objectif · jusqu'à ${CWEEK}`);
   const wowChartPath = process.env.WOW_CHART_PNG ? path.resolve(process.env.WOW_CHART_PNG) : path.join(__dirname, "..", "assets", "tmp", "wow_chart.png");
   if (fs.existsSync(wowChartPath)) {
@@ -695,12 +785,12 @@ slideBA();
 }
 
 // ════════════════════════════════════════════════════════════════════
-//  SLIDE 7 · ANALYSE BA — TRANSACTIONS, VALEUR & PERSONNES ACTIVES
+//  SLIDE 8 · ANALYSE BA — TRANSACTIONS, VALEUR & PERSONNES ACTIVES
 //  (diagnostic : pourquoi l'activité BA ralentit-elle ?)
 // ════════════════════════════════════════════════════════════════════
 {
   const s = pres.addSlide(); light(s);
-  chrome(s, 7, "Analyse · Activité BA semaine par semaine");
+  chrome(s, 8, "Analyse · Activité BA semaine par semaine");
   header(s, "Analyse BA — Transactions & activité", `Nombre de transactions, valeur et personnes actives par semaine · jusqu'à ${CWEEK}`);
 
   const upliftCell = (curr, prev) => {
@@ -726,11 +816,11 @@ slideBA();
 }
 
 // ════════════════════════════════════════════════════════════════════
-//  SLIDE 8 · RETOURS TERRAIN — répartition des problèmes signalés
+//  SLIDE 9 · RETOURS TERRAIN — répartition des problèmes signalés
 // ════════════════════════════════════════════════════════════════════
 {
   const s = pres.addSlide(); light(s);
-  chrome(s, 8, "Voix du terrain · Problèmes rencontrés");
+  chrome(s, 9, "Voix du terrain · Problèmes rencontrés");
   header(s, "Retours terrain", `Répartition des problèmes signalés · ${retours.total} signalement${retours.total > 1 ? "s" : ""} cumulés`);
 
   const items = (retours.items || []).slice(0, 10);
@@ -770,7 +860,7 @@ slideBA();
 }
 
 // ════════════════════════════════════════════════════════════════════
-//  SLIDE 9 · CLÔTURE (page de clôture)
+//  SLIDE 10 · CLÔTURE (page de clôture)
 // ════════════════════════════════════════════════════════════════════
 {
   const s = pres.addSlide(); light(s);
