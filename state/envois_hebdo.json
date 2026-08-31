@@ -4,5 +4,11 @@
     "envoye_le": "2026-08-24T07:54:15.631Z",
     "producteur": "inconnu",
     "run": "https://github.com/lkageteam/dtc-weekly-report/actions/runs/32703603091"
+  },
+  {
+    "semaine": "Semaine 11",
+    "envoye_le": "2026-08-31T14:32:42.054Z",
+    "producteur": "lka-unified/dtc_weekly",
+    "run": "https://github.com/lkageteam/dtc-weekly-report/actions/runs/33403202365"
   }
 ]
