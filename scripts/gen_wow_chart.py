@@ -37,24 +37,25 @@ FENETRE = 5
 
 POS_START = date(2026, 6, 12)  # 12 juin 2026 — ancre POS (ven→jeu)
 BA_START = date(2026, 6, 15)   # 15 juin 2026 — ancre BA (lun→dim)
+NOUVELLE_CONVENTION_POS_SEMAINE = 11  # À partir de S11 (2026-08-24), POS s'aligne sur BA (lun→dim)
 MOIS_AB = ["janv", "févr", "mars", "avr", "mai", "juin", "juil", "août", "sept", "oct", "nov", "déc"]
 
 
-def week_to_periode(w, anchor_date=BA_START):
+def week_to_periode(w, is_pos=False):
     """Convertit un libellé de semaine ('S8', 'Semaine 8', 8) en période ('31 juil – 6 août' pour POS ou '3 – 9 août' pour BA)."""
     if not w:
         return ""
-    # Si c'est déjà un libellé de période (contient un tiret/espace et un mois abrégé), on le garde
     sw = str(w).strip()
-    if any(m in sw.lower() for m in MOIS_AB) and ("–" in sw or "-" in sw):
-        return sw
     m = re.search(r"\d+", sw)
     if not m:
         return sw
     k = int(m.group(0))
     if k < 1:
         return sw
-    ws = anchor_date + timedelta(days=(k - 1) * 7)
+    if is_pos and k < NOUVELLE_CONVENTION_POS_SEMAINE:
+        ws = POS_START + timedelta(days=(k - 1) * 7)
+    else:
+        ws = BA_START + timedelta(days=(k - 1) * 7)
     we = ws + timedelta(days=6)
     m1 = MOIS_AB[ws.month - 1]
     m2 = MOIS_AB[we.month - 1]
@@ -208,21 +209,14 @@ def main():
     data = json.loads(report_path.read_text(encoding="utf-8"))
     wow = data.get("wow") or {}
     # Périodes : calculées avec leurs ancres respectives :
-    # • POS : ven→jeu (ancré au 12 juin 2026, ex: '31 juil – 6 août')
-    # • BA  : lun→dim (ancré au 15 juin 2026, ex: '3 – 9 août')
+    # • POS : ven→jeu jusqu'à S10, lun→dim à partir de S11 (ex: '24 – 30 août')
+    # • BA  : lun→dim (ancré au 15 juin 2026, ex: '24 – 30 août')
     raw_weeks = wow.get("weeks") or []
     raw_pos = wow.get("periodesPos")
     raw_ba = wow.get("periodesBa") or wow.get("periodes")
 
-    if raw_pos and any(raw_pos):
-        weeks_pos = [week_to_periode(w, POS_START) for w in raw_pos]
-    else:
-        weeks_pos = [week_to_periode(w, POS_START) for w in raw_weeks]
-
-    if raw_ba and any(raw_ba):
-        weeks_ba = [week_to_periode(w, BA_START) for w in raw_ba]
-    else:
-        weeks_ba = [week_to_periode(w, BA_START) for w in raw_weeks]
+    weeks_pos = [week_to_periode(w, is_pos=True) for w in (raw_weeks or raw_pos or [])]
+    weeks_ba = [week_to_periode(w, is_pos=False) for w in (raw_weeks or raw_ba or [])]
 
     if len(weeks_pos) < 2 and len(weeks_ba) < 2:
         print("⚠️ Pas assez de semaines pour un graphique WoW (< 2) — aucun PNG généré.")
