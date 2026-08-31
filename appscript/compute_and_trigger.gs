@@ -272,10 +272,24 @@ function _rptRetours_(formRows, kProb) {
 }
 
 // ───────────────────────────── helpers ─────────────────────────────
+// Semaine à partir de laquelle la fenêtre POS s'ALIGNE sur la fenêtre BA (lun→dim)
+// au lieu de son ancienne fenêtre ven→jeu. Décision du propriétaire, 2026-08-24 :
+// « on commencera les lundis ». La vue SQL `v_classement_tsa_semaine` et le pipeline
+// Python ont basculé ce jour-là ; ce fichier, lui, titrait encore « 21 au 27 août »
+// pour la Semaine 11 — les volumes étaient justes, le libellé mentait d'une fenêtre.
+// ⚠️ DOIT RESTER ÉGAL à `NOUVELLE_CONVENTION_POS_SEMAINE` (lka-unified,
+// `pipelines/dtc_weekly/dtc_weekly.py`) : les deux producteurs titrent le MÊME rapport.
+var RPT_NOUVELLE_CONVENTION_POS_SEMAINE = 11;
+
 function _rptCycle_(semaine) {
   var N = parseInt(String(semaine).replace(/\D/g, ''), 10) || 1, MS = 86400000;
   var bs = new Date(RPT_BA_START.getTime() + (N - 1) * 7 * MS), be = new Date(bs.getTime() + 6 * MS);        // BA lun→dim
-  var ps = new Date(RPT_PROGRAMME_START.getTime() + (N - 1) * 7 * MS), pe = new Date(ps.getTime() + 6 * MS); // POS ven→jeu
+  var ps, pe;
+  if (N < RPT_NOUVELLE_CONVENTION_POS_SEMAINE) {
+    ps = new Date(RPT_PROGRAMME_START.getTime() + (N - 1) * 7 * MS); pe = new Date(ps.getTime() + 6 * MS);   // POS ven→jeu (ancienne convention)
+  } else {
+    ps = bs; pe = be;                                                                                        // POS = BA, plus de décalage
+  }
   var MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
   function human(d) { return d.getDate() + ' ' + MOIS[d.getMonth()] + ' ' + d.getFullYear(); }
   function dmy(d) { return ('0' + d.getDate()).slice(-2) + '/' + ('0' + (d.getMonth() + 1)).slice(-2) + '/' + d.getFullYear(); }
