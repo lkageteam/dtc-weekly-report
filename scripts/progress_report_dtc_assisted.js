@@ -47,7 +47,12 @@ const NOUVELLE_CONVENTION_POS_SEMAINE = 11;
 // pipelines/dtc_weekly/dtc_weekly.py), qui applique réellement le filtre : ici la
 // valeur ne sert QU'À l'afficher. Les deux divergentes, la planche annoncerait une
 // règle que les chiffres ne suivent pas.
-const CROISSANCE_VOLUME_MINIMUM = 50000;    // À partir de S11 (2026-08-24), POS s'aligne sur BA (lun→dim)
+const CROISSANCE_VOLUME_MINIMUM = 50000;
+// ⚠️ « BASE DE COMPARAISON » et non « vol. précédent » : depuis le 2026-08-31 la
+// base est le MEILLEUR niveau antérieur du TSA (mémoire ouverte à la Semaine 11),
+// pas le volume de la semaine d'avant. Les deux coïncident tant que la mémoire
+// n'a qu'un point — jusqu'à la Semaine 12 —, puis divergent. Un intitulé qui
+// dirait « précédent » deviendrait faux sans que rien ne le signale.    // À partir de S11 (2026-08-24), POS s'aligne sur BA (lun→dim)
 
 // Mois abrégés — le libellé d'axe doit tenir sur UNE ligne horizontale dans une colonne
 // de graphique. « août » et « mars » ne s'abrègent pas, les autres oui.
@@ -682,7 +687,7 @@ const slideBA = () => {
   // Le plancher EXCLUT des TSA du classement : il doit se lire sur la planche,
   // pas seulement dans le code. Sans lui, un passage de 200 à 14 700 FCFA rendait
   // +7 250 % et gagnait sa région devant des collègues ayant progressé de millions.
-  header(s, "Croissance", `n°1 de chaque région par progression du volume — vs semaine précédente · base minimale ${fmt(CROISSANCE_VOLUME_MINIMUM)} FCFA · ${CWEEK}`);
+  header(s, "Croissance", `n°1 de chaque région par progression — vs son meilleur niveau antérieur · base minimale ${fmt(CROISSANCE_VOLUME_MINIMUM)} FCFA · ${CWEEK}`);
 
   const nbClasses = croissanceTSA.length;
   const meilleure = croissanceTSA[0] || {};
@@ -719,7 +724,7 @@ const slideBA = () => {
       { text: (pct >= 0 ? "+" : "") + pct.toFixed(1) + " %", color: pct >= 0 ? GREEN : REDX, bold: true }];
   });
   const ty5 = 3.18, tw5 = CW;
-  table(s, MX, ty5, tw5, ["RÉGION", "TSA (N°1 CROISSANCE)", "RBM", "VOL. PRÉCÉDENT (XAF)", "VOLUME (XAF)", "CROISSANCE"], rowsCroissance, {
+  table(s, MX, ty5, tw5, ["RÉGION", "TSA (N°1 CROISSANCE)", "RBM", "BASE DE COMPARAISON", "VOLUME (XAF)", "CROISSANCE"], rowsCroissance, {
     colWidths: [tw5 * 0.13, tw5 * 0.24, tw5 * 0.22, tw5 * 0.16, tw5 * 0.15, tw5 * 0.10],
     rowH: 0.42, fs: 10, hfs: 9,
   });
