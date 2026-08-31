@@ -41,7 +41,13 @@ const CYCLES = {
 const DEFAULT_WEEK = "Semaine 1";
 const PROGRAMME_START = new Date(2026, 5, 12); // 12 juin 2026 — ancre des semaines POS (ven→jeu)
 const BA_START = new Date(2026, 5, 15);        // 15 juin 2026 — ancre des semaines BA (lun→dim)
-const NOUVELLE_CONVENTION_POS_SEMAINE = 11;    // À partir de S11 (2026-08-24), POS s'aligne sur BA (lun→dim)
+const NOUVELLE_CONVENTION_POS_SEMAINE = 11;
+// Volume MINIMUM la semaine précédente pour qu'un TSA soit classable en croissance.
+// ⚠️ DOIT RESTER ÉGAL à `CROISSANCE_VOLUME_MINIMUM` (lka-unified,
+// pipelines/dtc_weekly/dtc_weekly.py), qui applique réellement le filtre : ici la
+// valeur ne sert QU'À l'afficher. Les deux divergentes, la planche annoncerait une
+// règle que les chiffres ne suivent pas.
+const CROISSANCE_VOLUME_MINIMUM = 50000;    // À partir de S11 (2026-08-24), POS s'aligne sur BA (lun→dim)
 
 // Mois abrégés — le libellé d'axe doit tenir sur UNE ligne horizontale dans une colonne
 // de graphique. « août » et « mars » ne s'abrègent pas, les autres oui.
@@ -673,7 +679,10 @@ const slideBA = () => {
 {
   const s = pres.addSlide(); light(s);
   chrome(s, 4, "Nouveau challenge · Croissance du volume");
-  header(s, "Croissance", `n°1 de chaque région par progression du volume — vs semaine précédente · ${CWEEK}`);
+  // Le plancher EXCLUT des TSA du classement : il doit se lire sur la planche,
+  // pas seulement dans le code. Sans lui, un passage de 200 à 14 700 FCFA rendait
+  // +7 250 % et gagnait sa région devant des collègues ayant progressé de millions.
+  header(s, "Croissance", `n°1 de chaque région par progression du volume — vs semaine précédente · base minimale ${fmt(CROISSANCE_VOLUME_MINIMUM)} FCFA · ${CWEEK}`);
 
   const nbClasses = croissanceTSA.length;
   const meilleure = croissanceTSA[0] || {};
