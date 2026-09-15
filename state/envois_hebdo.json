@@ -10,5 +10,11 @@
     "envoye_le": "2026-08-31T16:14:46.259Z",
     "producteur": "lka-unified/dtc_weekly",
     "run": "https://github.com/lkageteam/dtc-weekly-report/actions/runs/33412972871"
+  },
+  {
+    "semaine": "Semaine 13",
+    "envoye_le": "2026-09-15T15:35:43.646Z",
+    "producteur": "lka-unified/dtc_weekly",
+    "run": "https://github.com/lkageteam/dtc-weekly-report/actions/runs/34989437982"
   }
 ]
