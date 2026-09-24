@@ -28,11 +28,22 @@ async function main() {
   // 2) construire le message MIME (multipart/mixed avec pièce jointe)
   const fname = path.basename(file);
   const b64file = fs.readFileSync(file).toString("base64").replace(/(.{76})/g, "$1\r\n");
-  const subject = "Rapport hebdomadaire DTC Assisted" + (week ? " — " + week : "");
+  // Version et avertissement viennent du producteur (lka-unified, 2026-09-24).
+  // L'ancien corps affirmait « la semaine est bouclée » à CHAQUE envoi — faux
+  // pour une semaine partielle, et c'est la phrase que le lecteur retient.
+  const version = process.env.MAIL_VERSION || "";
+  const avert = (process.env.MAIL_AVERTISSEMENT || "").trim();
+  const subject = "Rapport hebdomadaire DTC Assisted" + (week ? " — " + week : "") +
+    (version ? " — version " + version : "");
   const from = tok.account || "me";
+  const etat = avert
+    ? avert.replace(/\n/g, "\r\n") + "\r\n\r\n"
+    : (version.startsWith("complète — remplace")
+        ? "La semaine est désormais complète : cette version remplace la version partielle envoyée précédemment.\r\n\r\n"
+        : "La semaine est complète.\r\n\r\n");
   const body =
-    "Bonjour,\r\n\r\n" +
-    "Le rapport DTC Assisted" + (week ? " (" + week + ")" : "") + " est généré automatiquement — la semaine est bouclée.\r\n" +
+    "Bonjour,\r\n\r\n" + etat +
+    "Le rapport DTC Assisted" + (week ? " (" + week + ")" : "") + " est généré automatiquement.\r\n" +
     "Le fichier .pptx est en pièce jointe.\r\n\r\n— Chaîne automatisée LKA × MTN";
   const boundary = "lka_" + Date.now();
   const mime = [
