@@ -58,5 +58,11 @@
     "envoye_le": "2026-10-05T08:18:56.756Z",
     "producteur": "lka-unified/dtc_weekly",
     "run": "https://github.com/lkageteam/dtc-weekly-report/actions/runs/37282809978"
+  },
+  {
+    "semaine": "Semaine 16 · POS →2026-10-03 · BA vide",
+    "envoye_le": "2026-10-05T09:50:20.305Z",
+    "producteur": "lka-unified/dtc_weekly",
+    "run": "https://github.com/lkageteam/dtc-weekly-report/actions/runs/37292607395"
   }
 ]
