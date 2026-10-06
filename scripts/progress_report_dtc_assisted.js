@@ -353,7 +353,7 @@ function applyJson(j) {
   CONFIG.primeThreshold = j.primeThreshold;
   const volByReg = {}, baAgg = {}, baDailyByReg = {};
   REGIONS.forEach(r => {
-    const p = (j.pos && j.pos[r]) || {}; CONFIG.pos[r] = { uniquePos: p.uniquePos || 0, daily: p.daily || 0, weekly: p.weekly || 0 };
+    const p = (j.pos && j.pos[r]) || {}; CONFIG.pos[r] = { uniquePos: p.uniquePos || 0, posActifs: p.posActifs, daily: p.daily || 0, weekly: p.weekly || 0 };
     volByReg[r] = p.real || 0;
     const b = (j.ba && j.ba.rows && j.ba.rows[r]) || {};
     CONFIG.effectif[r] = b.effectif || 0; baAgg[r] = { act: b.activations || 0, mont: b.montant || 0 }; baDailyByReg[r] = b.dailyTarget || 0;
@@ -375,7 +375,7 @@ function applyJson(j) {
 function buildReportJson(D) {
   const pos = {}, rows = {};
   REGIONS.forEach(r => {
-    pos[r] = { uniquePos: CONFIG.pos[r].uniquePos, daily: CONFIG.pos[r].daily, weekly: CONFIG.pos[r].weekly, real: D.volByReg[r] };
+    pos[r] = { uniquePos: CONFIG.pos[r].uniquePos, posActifs: CONFIG.pos[r].posActifs, daily: CONFIG.pos[r].daily, weekly: CONFIG.pos[r].weekly, real: D.volByReg[r] };
     rows[r] = { effectif: CONFIG.effectif[r], activations: D.baAgg[r].act, montant: D.baAgg[r].mont, dailyTarget: D.baDailyByReg[r] };
   });
   return {
@@ -652,12 +652,16 @@ const slideBA = () => {
     const p = WEEKLY.pos[reg] || { uniquePos: 0, daily: 0, weekly: 0 };
     const real = volByReg[reg] || 0;
     const taux = p.weekly ? real / p.weekly * 100 : 0;
-    tPos += p.uniquePos; tD += p.daily; tW += p.weekly; tReal += real;
-    rows.push([reg, fmt(p.uniquePos), fmt(p.daily), fmt(p.weekly), fmt(real), { text: taux.toFixed(1) + "%", color: taux >= 100 ? GREEN : taux >= 50 ? AMBER : REDX, bold: true }]);
+    // POS ACTIFS mesurés quand le calcul les fournit ; l'ancien UNIQUE POS
+    // (saisi à la main le 22/06, jamais mesuré) seulement pour un vieux contrat
+    const nPos = p.posActifs ?? p.uniquePos;
+    tPos += nPos; tD += p.daily; tW += p.weekly; tReal += real;
+    rows.push([reg, fmt(nPos), fmt(p.daily), fmt(p.weekly), fmt(real), { text: taux.toFixed(1) + "%", color: taux >= 100 ? GREEN : taux >= 50 ? AMBER : REDX, bold: true }]);
   });
   const tt = tW ? tReal / tW * 100 : 0;
   const ty = 2.0, rowH = 0.46, tw = CW;
-  table(s, MX, ty, tw, ["RÉGION", "UNIQUE POS", "TARGET DAILY", "TARGET WEEKLY", "RÉALISATION", "TAUX"], rows, {
+  const ACTIFS = REGIONS.some(r => (WEEKLY.pos[r] || {}).posActifs != null);
+  table(s, MX, ty, tw, ["RÉGION", ACTIFS ? "POS ACTIFS" : "UNIQUE POS", "TARGET DAILY", "TARGET WEEKLY", "RÉALISATION", "TAUX"], rows, {
     colWidths: [tw * 0.18, tw * 0.13, tw * 0.18, tw * 0.18, tw * 0.21, tw * 0.12],
     rowH, fs: 10.5, hfs: 9.5,
     totalRow: ["TOTAL", fmt(tPos), fmt(tD), fmt(tW), fmt(tReal), tt.toFixed(1) + "%"],
