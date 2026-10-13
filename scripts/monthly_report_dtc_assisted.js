@@ -11,9 +11,10 @@
 //   → fenêtre réelle = 15 au 30 juin 2026 (le programme n'a démarré que le 15).
 //   Les mois suivants (2026-07, 2026-08, …) couvrent le mois calendaire complet.
 //
-//  SLIDES (8) — miroir de l'hebdo, hors « Retours terrain » :
+//  SLIDES (9) — miroir de l'hebdo, hors « Retours terrain » :
 //   1 Couverture · 2 Recrutement · 3 Activations POS · 4 Prime & Rang (mois)
-//   5 Activations BA · 6 Month-over-month · 7 Analyse BA · 8 Clôture
+//   5 Prime RBM (mois PLEIN seulement) · 6 Activations BA · 7 Month-over-month
+//   8 Analyse BA · 9 Clôture
 //   La slide « Retours terrain » de l'hebdo n'existe pas ici : elle vient de la
 //   colonne « problème principal » de l'export Google Form, qui n'est PAS mirrorée
 //   dans la table MySQL `dtc_ba_activations` (seule source des données mensuelles).
@@ -22,18 +23,20 @@
 //   objectif du mois = objectif JOURNALIER (même taux que l'hebdo) × nombre de jours
 //   de la fenêtre — jours ouvrés (hors dimanche) pour le BA, tous les jours pour le POS.
 //   Réalisé BA = form filtré par Timestamp sur la fenêtre.
-//   Réalisé POS = somme des "Semaine N" du classement dont la période chevauche la fenêtre
-//   (le classement n'a pas de date par ligne, seulement une semaine POS ven→jeu) — une
-//   semaine à cheval sur deux mois compte donc dans les deux.
+//   Réalisé POS = ventes JOUR PAR JOUR (pos_daily.csv = lka_client_mtn.pos_sales),
+//   bornées au mois calendaire. Corrigé le 2026-09-03 : la version par semaines du
+//   classement donnait à juillet une fenêtre RÉELLE de 42 jours (26/06 → 06/08).
 //
 //  Données dans INPUT_DIR (défaut ./inputs), mêmes fichiers que le rapport hebdo :
-//   classement.csv (CLASSEMENT_TSA) · tsa_ref.csv (TSA_REF) · form.csv (Form BA / MySQL)
+//   pos_daily.csv (POS jour par jour) · tsa_ref.csv (TSA_REF) · form.csv (Form BA / MySQL)
 // ════════════════════════════════════════════════════════════════════
 const pptxgen = require("pptxgenjs");
 const { withPPTXEmbedFonts } = require("pptx-embed-fonts/pptxgenjs");
 const fs = require("fs");
 const path = require("path");
 const T = require("./lib/theme");
+const { classementRBM, slidePrimeRBM } = require("./lib/prime_rbm");
+const { posDuMois } = require("./lib/pos_jour");
 const {
   BG, INK, INK2, YEL, YELDK, YELSOFT, MUTE, MUTE2, LINE, ROW, GREEN, AMBER, REDX,
   fHead, fBody, HAS_LOGO, LOGO, W, H, MX, CW, REGIONS, CONFIG, PROGRAMME_START, BA_START,
@@ -98,14 +101,10 @@ const posDaily = {}; REGIONS.forEach(r => posDaily[r] = 0);
 tsaRef.forEach(r => { const k = (r.REGION || "").trim().toUpperCase(); if (posDaily[k] !== undefined) posDaily[k] += num(r.OBJECTIF_DAILY); });
 const posDailyTotal = REGIONS.reduce((s, r) => s + posDaily[r], 0);
 
-const classement = readCSV(path.join(IN, "classement.csv"));
-const weekNum = w => parseInt(String(w).replace(/\D/g, "")) || 0;
-// période POS d'une semaine N (ven→jeu, ancrée PROGRAMME_START) — même formule que l'hebdo
-function posWeekWindow(N) {
-  const ps = new Date(PROGRAMME_START.getTime() + (N - 1) * 7 * MS);
-  return [ps, new Date(ps.getTime() + 6 * MS)];
-}
-const allWeeks = [...new Set(classement.map(r => weekNum(r.SEMAINE)))].filter(Boolean).sort((a, b) => a - b);
+// 🔴 `classement.csv` n'est PLUS lu ici. Ses lignes portent une SEMAINE POS
+// (ven→jeu), pas une date : agréger un mois avec elles déborde des deux côtés.
+// Le mensuel lit `pos_daily.csv` via `lib/pos_jour.js`. Le rapport HEBDOMADAIRE,
+// lui, garde le classement — sa fenêtre EST une semaine.
 
 const form = readCSV(path.join(IN, "form.csv"));
 const H0 = Object.keys(form[0] || {});
@@ -124,25 +123,23 @@ const dailyTarget = CONFIG.baDailyGlobal;
 
 // — Agrégats d'un mois (POS + BA), réutilisés pour le mois rendu ET pour la série mois/mois —
 function computeMonth(win) {
-  // POS : semaines du classement dont la période chevauche la fenêtre POS
-  const includedWeeks = allWeeks.filter(N => { const [ps, pe] = posWeekWindow(N); return ps <= win.end && pe >= win.posStart; });
-  const volByReg = {}; REGIONS.forEach(r => volByReg[r] = 0);
-  const volByTSA = new Map();
-  classement.forEach(r => {
-    if (!includedWeeks.includes(weekNum(r.SEMAINE))) return;
-    const reg = (r.REGION || "").trim().toUpperCase(); if (volByReg[reg] === undefined) return;
-    const v = num(r.VOLUME_XAF);
-    volByReg[reg] += v;
-    const key = String(r.TSA || r.TSA_FULL_NAME || "").trim();
-    const cur = volByTSA.get(key) || { TSA: r.TSA_FULL_NAME || r.TSA, REGION: reg, RBM: r.RBM, VOLUME_XAF: 0 };
-    cur.VOLUME_XAF += v; volByTSA.set(key, cur);
-  });
+  // 🔴 POS : compté au JOUR (`pos_daily.csv`), PAS par semaines du classement.
+  // Corrigé le 2026-09-03. Les lignes du classement portent une SEMAINE POS
+  // (ven→jeu), pas une date : « les semaines qui chevauchent le mois » donnait
+  // à juillet une fenêtre RÉELLE de 42 jours (26/06 → 06/08) et gonflait le
+  // Nord Ouest de 19,6 M à 25,9 M. Mesure complète dans `lib/pos_jour.js`.
+  const P = posDuMois(IN, win.yy, win.mm, PROGRAMME_START);
+  const volByReg = P.volByReg;
+  const volByTSA = P.volByTSA;
+  const joursPOS = P.jours;
   const volTotal = REGIONS.reduce((s, r) => s + volByReg[r], 0);
   // n°1 de chaque région sur le CUMUL du mois (le rang hebdo du classement ne s'applique pas ici)
   const primeTSA = REGIONS.map(reg =>
     [...volByTSA.values()].filter(t => t.REGION === reg).sort((a, b) => b.VOLUME_XAF - a.VOLUME_XAF)[0]
   ).filter(Boolean).sort((a, b) => b.VOLUME_XAF - a.VOLUME_XAF);
-  const posObjectif = Math.round(posDailyTotal) * win.posDays;
+  // Cible = journalier × jours RÉELLEMENT présents dans pos_sales (au 03/09, août
+  // s'arrête au 30) : sinon 30 j de réalisé sont jugés sur 31 j de cible.
+  const posObjectif = Math.round(posDailyTotal) * joursPOS;
 
   // BA : activations + montant par région, série jour-par-jour, diagnostic transactions/actifs
   const baAgg = {}; REGIONS.forEach(r => baAgg[r] = { act: 0, mont: 0 });
@@ -158,7 +155,7 @@ function computeMonth(win) {
   });
   const baObjectif = dailyTarget * win.workDays;
 
-  return { win, includedWeeks, volByReg, volTotal, primeTSA, posObjectif, baAgg, dayMap, baObjectif, nbTx, baMont, actifs: actifs.size };
+  return { win, joursPOS, posActifs: P.posActifs, premierJour: P.premier, dernierJour: P.dernier, volByReg, volTotal, primeTSA, posObjectif, baAgg, dayMap, baObjectif, nbTx, baMont, actifs: actifs.size };
 }
 
 const D = computeMonth(WIN);
@@ -205,7 +202,8 @@ pres.layout = "LAYOUT_WIDE";
 pres.title = "Progress Report DTC Assisted — Vue mensuelle — MTN Bénin";
 pres.author = "Contribution LKA";
 pres.company = "MTN Bénin";
-const TOTAL = 8;
+// 9 slides sur un mois PLEIN, 8 sur un mois tronqué (la Prime RBM saute).
+const TOTAL = WIN.partial ? 8 : 9;
 const tauxColor = p => p >= 90 ? GREEN : p >= 50 ? AMBER : REDX;
 
 // ════════════════════════════════════════════════════════════════════
@@ -293,14 +291,14 @@ const tauxColor = p => p >= 90 ? GREEN : p >= 50 ? AMBER : REDX;
   chrome(pres, s, 3, "Vue mensuelle · Performance base globale TSA");
   header(pres, s, "Activations POS — Performance par région", `Volume des points de vente (base globale TSA) · ${MONTH_LABEL} · ${POS_WINDOW_LABEL}`);
 
-  s.addText(`Performances globales des points de vente sur ${POS_WINDOW_LABEL} (${WIN.posDays} jours) — réalisation rapportée aux cibles mensuelles par région.`, {
+  s.addText(`Performances globales des points de vente sur ${POS_WINDOW_LABEL} — ${D.joursPOS} jours de ventes réellement enregistrés, réalisation rapportée aux cibles par région.`, {
     x: MX, y: 1.5, w: CW, h: 0.4, margin: 0, fontFace: fBody, fontSize: 12, color: INK2,
   });
 
   const rows = []; let tPos = 0, tD = 0, tM = 0, tReal = 0;
   REGIONS.forEach(reg => {
     const daily = Math.round(posDaily[reg]);
-    const monthlyTarget = daily * WIN.posDays;
+    const monthlyTarget = daily * D.joursPOS;
     const real = D.volByReg[reg] || 0;
     const uniquePos = (CONFIG.pos[reg] || {}).uniquePos || 0;
     const taux = monthlyTarget ? real / monthlyTarget * 100 : 0;
@@ -318,7 +316,7 @@ const tauxColor = p => p >= 90 ? GREEN : p >= 50 ? AMBER : REDX;
   s.addText(`Cible mensuelle totale : ${fmt(tM)} FCFA · Réalisé : ${fmt(tReal)} FCFA · Taux de réalisation global : ${tt.toFixed(1)} %.`, {
     x: MX, y: 6.42, w: CW, h: 0.3, margin: 0, fontFace: fBody, italic: true, fontSize: 10.5, color: MUTE,
   });
-  s.addText(`Réalisé = cumul des ${D.includedWeeks.map(n => "S" + n).join(", ")} du classement (semaines POS ven→jeu chevauchant la fenêtre ; une semaine à cheval compte dans les deux mois).`, {
+  s.addText(`Réalisé = ventes POS jour par jour (pos_sales), du ${dmy(D.premierJour)} au ${dmy(D.dernierJour)} — ${D.joursPOS} jours. Cible = objectif journalier × ces mêmes ${D.joursPOS} jours, pour ne pas juger un mois incomplet sur un mois plein.`, {
     x: MX, y: 6.72, w: CW, h: 0.3, margin: 0, fontFace: fBody, italic: true, fontSize: 9, color: MUTE2,
   });
 }
@@ -349,8 +347,10 @@ const tauxColor = p => p >= 90 ? GREEN : p >= 50 ? AMBER : REDX;
   });
 
   // Seuil de prime mensualisé : seuil hebdo × nb de semaines POS retenues pour le mois
-  const nbWeeks = D.includedWeeks.length || 1;
-  const threshold = CONFIG.primeThreshold * nbWeeks;
+  // Seuil mensualisé au JOUR : le seuil hebdo rapporté aux jours réellement comptés
+  // (7 j = 1 semaine). Avant, il se multipliait par un nombre de semaines qui
+  // débordait du mois — le seuil de juillet valait 6 semaines pour 31 jours.
+  const threshold = Math.round(CONFIG.primeThreshold * D.joursPOS / 7);
   let nbElig = 0;
   const rows = D.primeTSA.map(r => {
     const elig = r.VOLUME_XAF >= threshold; if (elig) nbElig++;
@@ -362,7 +362,7 @@ const tauxColor = p => p >= 90 ? GREEN : p >= 50 ? AMBER : REDX;
   s.addShape(pres.shapes.RECTANGLE, { x: MX, y: bnY, w: 0.08, h: 0.4, fill: { color: elgOK ? GREEN : YELDK }, line: { type: "none" } });
   s.addText([
     { text: "Prime TSA (mois) : ", options: { fontFace: fHead, bold: true, color: INK } },
-    { text: `n°1 régional sur le cumul du mois ET volume ≥ ${fmt(threshold)} FCFA (${fmt(CONFIG.primeThreshold)} × ${nbWeeks} sem.) — `, options: { fontFace: fBody, color: INK2 } },
+    { text: `n°1 régional sur le cumul du mois ET volume ≥ ${fmt(threshold)} FCFA (${fmt(CONFIG.primeThreshold)} / sem. × ${D.joursPOS} j) — `, options: { fontFace: fBody, color: INK2 } },
     { text: elgOK ? `${nbElig} lauréat${nbElig > 1 ? "s" : ""} ce mois-ci.` : `aucun éligible ce mois-ci (meilleur volume : ${fmt(champion.VOLUME_XAF || 0)} FCFA).`, options: { fontFace: fHead, bold: true, color: elgOK ? GREEN : REDX } },
   ], { x: MX + 0.22, y: bnY, w: CW - 0.4, h: 0.4, margin: 0, valign: "middle", fontSize: 10.5 });
 
@@ -373,11 +373,24 @@ const tauxColor = p => p >= 90 ? GREEN : p >= 50 ? AMBER : REDX;
 }
 
 // ════════════════════════════════════════════════════════════════════
-//  SLIDE 5 · ACTIVATIONS BA — VUE MENSUELLE
+//  SLIDE 5 · PRIME RBM — LE MEILLEUR DES 7 (mois PLEIN uniquement)
+//  Calcul et dessin dans lib/prime_rbm.js — partagés avec le deck autonome
+//  scripts/prime_rbm_dtc_assisted.js. Ne pas les dupliquer ici.
+//  ⚠️ Juin est un mois TRONQUÉ (programme démarré le 15/06) : la slide est
+//  omise, elle ne classe pas un mois incomplet contre des mois pleins.
+// ════════════════════════════════════════════════════════════════════
+if (!WIN.partial) {
+  slidePrimeRBM(pres, classementRBM(IN, YY, MM), 5);
+} else {
+  console.log("↷ Slide Prime RBM omise : " + MONTH_LABEL + " est un mois tronqué (démarrage du programme le 15/06).");
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  SLIDE 6 · ACTIVATIONS BA — VUE MENSUELLE
 // ════════════════════════════════════════════════════════════════════
 {
   const s = pres.addSlide(); light(s);
-  chrome(pres, s, 5, "Vue mensuelle · Activations BA");
+  chrome(pres, s, 6, "Vue mensuelle · Activations BA");
   header(pres, s, "Activations BA — Force de soutien aux TSA", `Programme BA en appui des TSA · ${MONTH_LABEL} · ${WINDOW_LABEL}`);
 
   const rows = []; let tEff = 0, tAct = 0, tTar = 0, tMon = 0;
@@ -446,14 +459,14 @@ const tauxColor = p => p >= 90 ? GREEN : p >= 50 ? AMBER : REDX;
 // donc on compare des TAUX de réalisation, seule grandeur comparable entre mois.
 {
   const s = pres.addSlide(); light(s);
-  chrome(pres, s, 6, "Tendances · Évolution mois/mois");
+  chrome(pres, s, 7, "Tendances · Évolution mois/mois");
   header(pres, s, "Month-over-month — POS & BA", `Réalisé vs objectif du mois · jusqu'à ${MONTH_LABEL}`);
 
   // « 16,55 M » — abrégé pour la lisibilité, mais toujours 2 décimales : avec
   // 0 décimale au-dessus de 10 M, 17,5 M s'affichait « 18 M » (un demi-million effacé).
   const M = n => (n / 1e6).toFixed(2).replace(".", ",") + " M";
   const panels = [
-    { title: "POS — Volume réalisé", real: m => m.volTotal, obj: m => m.posObjectif, unit: m => `${m.win.posDays} j` },
+    { title: "POS — Volume réalisé", real: m => m.volTotal, obj: m => m.posObjectif, unit: m => `${m.joursPOS} j` },
     { title: "BA — Montant réalisé", real: m => m.baMont, obj: m => m.baObjectif, unit: m => `${m.win.workDays} j ouvrés` },
   ];
   const pw = (CW - 0.7) / 2, py0 = 1.72;
@@ -534,7 +547,7 @@ const tauxColor = p => p >= 90 ? GREEN : p >= 50 ? AMBER : REDX;
 // ════════════════════════════════════════════════════════════════════
 {
   const s = pres.addSlide(); light(s);
-  chrome(pres, s, 7, "Analyse · Activité BA mois par mois");
+  chrome(pres, s, 8, "Analyse · Activité BA mois par mois");
   header(pres, s, "Analyse BA — Transactions & activité", `Nombre de transactions, valeur et personnes actives par mois · jusqu'à ${MONTH_LABEL}`);
 
   const upliftCell = (curr, prev) => {

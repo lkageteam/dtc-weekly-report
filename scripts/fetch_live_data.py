@@ -75,6 +75,31 @@ def main():
     rows = [[r[0], r[1], r[2], r[3], r[4]] for r in cur.fetchall()]
     write_csv(out / "tsa_ref.csv", ["CORPORATE_NUM", "TSA_FULL_NAME", "REGION", "RBM", "OBJECTIF_DAILY"], rows)
 
+    # POS JOURNALIER (pos_sales) → LA source des agrégats MENSUELS.
+    # 🔴 NE PAS agréger un mois depuis classement.csv : ses lignes portent une
+    # SEMAINE POS (ven→jeu), pas une date. Une semaine à cheval déborde alors sur
+    # deux mois — juillet 2026 sortait à 25,9 M pour le Nord Ouest par les semaines
+    # (fenêtre réelle 26/06→06/08, 42 jours) contre 19,6 M par les jours.
+    # Le jour existe dans la base : on l'exploite. Mesuré le 2026-09-03.
+    #
+    # ⚠️ Les collations diffèrent entre pos_sales/pos_reference et tsa_reference_mtn
+    # (utf8mb4_unicode_ci vs utf8mb4_0900_ai_ci) : sans COLLATE explicite, MySQL
+    # rend « Illegal mix of collations » (1267) sur la jointure, pas un résultat faux.
+    cur.execute("""
+        SELECT s.sale_date, s.pos_msisdn, t.corporate_num, t.tsa_full_name,
+               t.region, t.rbm_name, s.volume_xaf
+        FROM pos_sales s
+        JOIN pos_reference p
+          ON p.pos_msisdn COLLATE utf8mb4_general_ci = s.pos_msisdn COLLATE utf8mb4_general_ci
+        JOIN tsa_reference_mtn t
+          ON t.corporate_num COLLATE utf8mb4_general_ci = p.tsa_corporate COLLATE utf8mb4_general_ci
+        ORDER BY s.sale_date
+    """)
+    rows = [[r[0].isoformat(), r[1], r[2], r[3], r[4], r[5], r[6]] for r in cur.fetchall()]
+    write_csv(out / "pos_daily.csv",
+              ["SALE_DATE", "POS_MSISDN", "TSA", "TSA_FULL_NAME", "REGION", "RBM", "VOLUME_XAF"],
+              rows)
+
     # FORM BA (dtc_ba_activations) → Activations BA par région, jour par jour
     # numero_ba (numéro de téléphone du BA) = identifiant stable pour compter les BA actifs
     # (contrairement à l'email du Form, qui n'est pas mirroré ici et que les agents changeaient souvent).
