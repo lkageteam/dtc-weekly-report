@@ -625,10 +625,16 @@ const slideBA = () => {
     s.addText(d.pct.toFixed(1) + "%", { x: rx + rw - valW, y, w: valW, h: rowH - 0.05, margin: 0, fontFace: fHead, bold: true, fontSize: 8.5, color: c, align: "right", valign: "middle" });
   });
   // repère objectif (ligne verticale à 100 %)
-  const objX = trackX + (100 / scaleMax) * trackW;
-  const barsBottom = by + daySeries.length * rowH;
-  s.addShape(pres.shapes.RECTANGLE, { x: objX, y: by - 0.02, w: 0.014, h: barsBottom - by - 0.05, fill: { color: INK }, line: { type: "none" } });
-  s.addText("objectif", { x: objX - 0.6, y: barsBottom, w: 1.2, h: 0.2, margin: 0, fontFace: fBody, fontSize: 7.5, color: MUTE, align: "center" });
+  // ⚠️ BA vide → aucun jour → hauteur 0 × rowH − 0,05 = NÉGATIVE : PowerPoint
+  // déclare le fichier corrompu (« Réparer »). Arrivé sur la Semaine 19, 27/10.
+  if (daySeries.length) {
+    const objX = trackX + (100 / scaleMax) * trackW;
+    const barsBottom = by + daySeries.length * rowH;
+    s.addShape(pres.shapes.RECTANGLE, { x: objX, y: by - 0.02, w: 0.014, h: barsBottom - by - 0.05, fill: { color: INK }, line: { type: "none" } });
+    s.addText("objectif", { x: objX - 0.6, y: barsBottom, w: 1.2, h: 0.2, margin: 0, fontFace: fBody, fontSize: 7.5, color: MUTE, align: "center" });
+  } else {
+    s.addText("aucune donnée reçue", { x: rx, y: by, w: rw, h: 0.4, margin: 0, fontFace: fBody, italic: true, fontSize: 10, color: MUTE, valign: "middle" });
+  }
 
   if (WEEKLY.noteActivations) s.addText(WEEKLY.noteActivations, {
     x: MX, y: 6.45, w: tw, h: 0.5, margin: 0, fontFace: fBody, italic: true, fontSize: 9.5, color: REDX, lineSpacingMultiple: 1.05, valign: "top",
